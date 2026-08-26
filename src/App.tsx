@@ -1,9 +1,11 @@
 import { useState, useMemo } from "react";
 import { AnimatePresence } from "framer-motion";
 import { MockProvider } from "./providers/mock";
-import { ClaudeProvider } from "./providers/claude";
+import { providerEntry } from "./providers/registry";
 import { useUsage } from "./hooks/useUsage";
 import { useIntegration } from "./hooks/useIntegration";
+import { useSettings } from "./hooks/useSettings";
+import { useAutoResize } from "./hooks/useAutoResize";
 import { HoverPanel } from "./components/HoverPanel";
 import { ClickPanel } from "./components/ClickPanel";
 import "./styles/index.css";
@@ -25,20 +27,26 @@ function App() {
   const [mockPercent, setMockPercent] = useState(80);
   const [showAbsolute, setShowAbsolute] = useState(false);
 
+  const { providerId } = useSettings();
+  const entry = providerEntry(providerId);
+
   const provider = useMemo(() => {
     if (view === "dev") {
       return new MockProvider(mockPercent, showAbsolute);
     }
-    return new ClaudeProvider();
-  }, [view, mockPercent, showAbsolute]);
+    return entry.create!();
+  }, [view, mockPercent, showAbsolute, entry]);
 
   if (provider instanceof MockProvider) {
     provider.setPercent(mockPercent);
   }
 
-  const { snapshot, state, lastRefresh, refresh } = useUsage(provider, 3000);
+  // The API windows only move every few minutes and the local scan walks every
+  // active session file — polling every 3s bought nothing but I/O.
+  const { snapshot, state, lastRefresh, refresh } = useUsage(provider, 30_000);
 
-  useIntegration(snapshot, state);
+  useIntegration(snapshot, state, view === "dev" ? "Mock" : entry.name);
+  useAutoResize(view !== "dev");
 
   if (view === "hover") {
     const displaySnapshot = snapshot || { usedPercent: 0, remainingPercent: 100 };

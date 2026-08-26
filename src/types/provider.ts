@@ -1,3 +1,13 @@
+/** A metered rate-limit window reported by the provider. */
+export type LimitKind = "session" | "weekly" | "weekly_opus";
+
+export interface UsageLimit {
+  kind: LimitKind;
+  /** 0–100 */
+  percent: number;
+  resetAt?: Date;
+}
+
 export interface UsageSnapshot {
   usedPercent: number;
   remainingPercent: number;
@@ -10,6 +20,13 @@ export interface UsageSnapshot {
   resetAt?: Date;
   currentModel?: string;
   account?: string;
+
+  /** Subscription tier, e.g. "pro" / "max" */
+  plan?: string;
+  /** Every metered window the plan exposes (session, weekly, …) */
+  limits?: UsageLimit[];
+  /** Live sync is failing — these are the last known good numbers */
+  stale?: boolean;
 
   /** Where this data came from (for debugging) */
   source?: "local-file" | "cli" | "api" | "mock" | "hybrid";

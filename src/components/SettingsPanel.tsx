@@ -1,31 +1,41 @@
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { getVersion } from "@tauri-apps/api/app";
 import { isEnabled, enable, disable } from "@tauri-apps/plugin-autostart";
 import type { Theme, Language } from "../hooks/useSettings";
-import { t } from "../lib/i18n";
+import { t, type StringKey } from "../lib/i18n";
 
 interface SettingsPanelProps {
   theme: Theme;
   language: Language;
   onThemeChange: (theme: Theme) => void;
   onLanguageChange: (language: Language) => void;
-  onClose: () => void;
+  onCheckUpdates: () => void;
+  onExit: () => void;
 }
 
-const THEMES: Theme[] = ["dark", "light"];
-const THEME_KEYS = { dark: "themeDark", light: "themeLight" } as const;
+const THEMES: Theme[] = ["system", "dark", "light"];
+const THEME_KEYS: Record<Theme, StringKey> = { system: "themeSystem", dark: "themeDark", light: "themeLight" };
 const LANGUAGES: Language[] = ["en", "th"];
-const LANGUAGE_KEYS = { en: "languageEn", th: "languageTh" } as const;
+const LANGUAGE_KEYS: Record<Language, StringKey> = { en: "languageEn", th: "languageTh" };
 
 /**
- * Inline settings overlay — theme and language pickers.
- * Replaces the ClickPanel body when open; closes back to the usage view.
+ * The Settings tab: appearance, startup, and the About actions that used to
+ * live in the old right-hand nav rail.
  */
-export function SettingsPanel({ theme, language, onThemeChange, onLanguageChange, onClose }: SettingsPanelProps) {
+export function SettingsPanel({
+  theme,
+  language,
+  onThemeChange,
+  onLanguageChange,
+  onCheckUpdates,
+  onExit,
+}: SettingsPanelProps) {
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     isEnabled().then(setAutostart).catch(() => setAutostart(false));
+    getVersion().then(setVersion).catch(() => setVersion(null));
   }, []);
 
   const toggleAutostart = async () => {
@@ -40,75 +50,32 @@ export function SettingsPanel({ theme, language, onThemeChange, onLanguageChange
   };
 
   return (
-    <motion.div
-      className="flex-1 min-w-0 px-6 py-5 flex flex-col gap-5"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold" style={{ color: "var(--color-text-primary)" }}>
-          {t(language, "settingsTitle")}
-        </span>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-md transition-colors cursor-pointer"
-          style={{ color: "var(--color-text-muted)" }}
-          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--color-bg-elevated)")}
-          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
-          title={t(language, "close")}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
-          {t(language, "settingsTheme")}
-        </span>
+    <div className="flex flex-col gap-4">
+      <Field label={t(language, "settingsTheme")}>
         <div className="flex gap-2">
-          {THEMES.map((themeOption) => (
-            <button
-              key={themeOption}
-              onClick={() => onThemeChange(themeOption)}
-              className="flex-1 text-xs py-2 rounded-lg transition-colors cursor-pointer"
-              style={{
-                background: theme === themeOption ? "var(--color-bg-elevated)" : "transparent",
-                color: theme === themeOption ? "var(--color-accent)" : "var(--color-text-secondary)",
-                border: `1px solid ${theme === themeOption ? "var(--color-accent)" : "var(--color-border-subtle)"}`,
-              }}
-            >
-              {t(language, THEME_KEYS[themeOption])}
-            </button>
+          {THEMES.map((option) => (
+            <Segment
+              key={option}
+              selected={theme === option}
+              onClick={() => onThemeChange(option)}
+              label={t(language, THEME_KEYS[option])}
+            />
           ))}
         </div>
-      </div>
+      </Field>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-xs font-medium" style={{ color: "var(--color-text-secondary)" }}>
-          {t(language, "settingsLanguage")}
-        </span>
+      <Field label={t(language, "settingsLanguage")}>
         <div className="flex gap-2">
-          {LANGUAGES.map((languageOption) => (
-            <button
-              key={languageOption}
-              onClick={() => onLanguageChange(languageOption)}
-              className="flex-1 text-xs py-2 rounded-lg transition-colors cursor-pointer"
-              style={{
-                background: language === languageOption ? "var(--color-bg-elevated)" : "transparent",
-                color: language === languageOption ? "var(--color-accent)" : "var(--color-text-secondary)",
-                border: `1px solid ${language === languageOption ? "var(--color-accent)" : "var(--color-border-subtle)"}`,
-              }}
-            >
-              {t(language, LANGUAGE_KEYS[languageOption])}
-            </button>
+          {LANGUAGES.map((option) => (
+            <Segment
+              key={option}
+              selected={language === option}
+              onClick={() => onLanguageChange(option)}
+              label={t(language, LANGUAGE_KEYS[option])}
+            />
           ))}
         </div>
-      </div>
+      </Field>
 
       <label
         className="flex items-center justify-between text-xs cursor-pointer py-1"
@@ -123,6 +90,67 @@ export function SettingsPanel({ theme, language, onThemeChange, onLanguageChange
           className="accent-[var(--color-accent)]"
         />
       </label>
-    </motion.div>
+
+      <div style={{ borderTop: "1px solid var(--color-border-subtle)" }} />
+
+      <Field label={`${t(language, "settingsAbout")}${version ? ` · v${version}` : ""}`}>
+        <div className="flex gap-2">
+          <button
+            onClick={onCheckUpdates}
+            className="flex-1 text-xs py-2 rounded-lg cursor-pointer transition-colors"
+            style={{
+              background: "transparent",
+              color: "var(--color-text-secondary)",
+              border: "1px solid var(--color-border-subtle)",
+            }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--color-bg-elevated)")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
+          >
+            {t(language, "navCheckUpdates")}
+          </button>
+          <button
+            onClick={onExit}
+            className="flex-1 text-xs py-2 rounded-lg cursor-pointer transition-colors"
+            style={{
+              background: "transparent",
+              color: "var(--color-status-critical)",
+              border: "1px solid var(--color-border-subtle)",
+            }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--color-bg-elevated)")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
+          >
+            {t(language, "navExit")}
+          </button>
+        </div>
+      </Field>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function Segment({ selected, onClick, label }: { selected: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={selected}
+      className="flex-1 text-xs py-2 rounded-lg transition-colors cursor-pointer"
+      style={{
+        background: selected ? "var(--color-bg-elevated)" : "transparent",
+        color: selected ? "var(--color-accent)" : "var(--color-text-secondary)",
+        border: `1px solid ${selected ? "var(--color-accent)" : "var(--color-border-subtle)"}`,
+      }}
+    >
+      {label}
+    </button>
   );
 }

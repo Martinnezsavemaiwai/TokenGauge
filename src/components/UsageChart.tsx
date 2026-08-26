@@ -1,10 +1,14 @@
 import type { UsageState } from "../types/provider";
 import type { Language } from "../hooks/useSettings";
 import { t } from "../lib/i18n";
+import { bucketHour } from "../lib/format";
 
 interface UsageChartProps {
   state?: UsageState;
+  /** 24 rolling hourly buckets, oldest first — index 23 is the hour `endHour` names. */
   history?: number[];
+  /** Clock hour the newest bucket belongs to. Defaults to now. */
+  endHour?: number;
   language?: Language;
 }
 
@@ -28,21 +32,26 @@ function smoothPath(points: [number, number][]): string {
 }
 
 /**
- * UsageChart — smoothed sparkline over the active hours of the day.
- * Crops leading/trailing zero buckets so a sparse day doesn't render as
- * mostly dead air, then draws an area+line trend instead of 24 discrete bars.
+ * UsageChart — smoothed sparkline over the rolling 24 hours, cropped to the
+ * active stretch so a sparse day doesn't render as mostly dead air.
+ *
+ * The buckets are positions in a rolling window, not clock hours: bucket 23 is
+ * whatever hour it is now. Printing the index as an hour is what used to pin
+ * the right edge of the axis to "11 PM" around the clock.
  */
-export function UsageChart({ state, history, language = "en" }: UsageChartProps) {
+export function UsageChart({ state, history, endHour, language = "en" }: UsageChartProps) {
   const isNoAccess = state === "no_access" || state === "error";
   const rawData = history && history.length === 24 ? history : Array(24).fill(0);
+  const newestHour = endHour ?? new Date().getHours();
+  const hourAt = (index: number) => bucketHour(index, newestHour);
 
   const firstActive = rawData.findIndex((v) => v > 0);
   const lastActive = rawData.length - 1 - [...rawData].reverse().findIndex((v) => v > 0);
   const hasActivity = !isNoAccess && firstActive !== -1;
 
-  const startHour = hasActivity ? Math.max(0, firstActive - 1) : 0;
-  const endHour = hasActivity ? Math.min(23, lastActive + 1) : 23;
-  const cropped = rawData.slice(startHour, endHour + 1);
+  const startIndex = hasActivity ? Math.max(0, firstActive - 1) : 0;
+  const endIndex = hasActivity ? Math.min(23, lastActive + 1) : 23;
+  const cropped = rawData.slice(startIndex, endIndex + 1);
   const maxVal = Math.max(...cropped, 1);
 
   const w = 300;
@@ -62,11 +71,8 @@ export function UsageChart({ state, history, language = "en" }: UsageChartProps)
     : "";
 
   return (
-    <div className="flex flex-col gap-2.5">
-      <span
-        className="text-xs font-medium"
-        style={{ color: "var(--color-text-primary)" }}
-      >
+    <div className="flex flex-col gap-2">
+      <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
         {t(language, "todaysUsage")}
       </span>
 
@@ -75,14 +81,14 @@ export function UsageChart({ state, history, language = "en" }: UsageChartProps)
         role="img"
         aria-label={
           hasActivity
-            ? `Usage trend from ${formatHour(startHour)} to ${formatHour(endHour)}`
-            : "No usage recorded today"
+            ? `Usage trend from ${formatHour(hourAt(startIndex))} to ${formatHour(hourAt(endIndex))}`
+            : "No usage recorded in the last 24 hours"
         }
       >
         {isNoAccess || !hasActivity ? (
           <div
-            className="w-full h-full rounded flex items-center justify-center text-xs"
-            style={{ background: "var(--color-bg-elevated)", color: "var(--color-text-muted)", opacity: 0.6 }}
+            className="w-full h-full rounded-lg flex items-center justify-center text-xs"
+            style={{ background: "var(--color-bg-elevated)", color: "var(--color-text-muted)" }}
           >
             {isNoAccess ? t(language, "noData") : t(language, "noUsageToday")}
           </div>
@@ -101,9 +107,9 @@ export function UsageChart({ state, history, language = "en" }: UsageChartProps)
       </div>
 
       {hasActivity && (
-        <div className="flex justify-between text-[0.5625rem]" style={{ color: "var(--color-text-muted)" }}>
-          <span>{formatHour(startHour)}</span>
-          <span>{formatHour(endHour)}</span>
+        <div className="flex justify-between text-[0.6875rem]" style={{ color: "var(--color-text-muted)" }}>
+          <span>{formatHour(hourAt(startIndex))}</span>
+          <span>{formatHour(hourAt(endIndex))}</span>
         </div>
       )}
     </div>

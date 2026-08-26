@@ -71,12 +71,12 @@ export function ProgressRing({
       {/* Center text */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span
-          className="text-2xl font-bold leading-none"
+          className="font-display text-2xl font-bold leading-none tabular-nums"
           style={{ color: stateColor(state) }}
         >
           {state === "no_access" || state === "error" ? "—" : `${Math.round(filled)}%`}
         </span>
-        <span className="text-xs mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
+        <span className="text-[0.6875rem] mt-1" style={{ color: "var(--color-text-muted)" }}>
           {state === "no_access" ? t(language, "noData") : state === "error" ? t(language, "error") : t(language, "used")}
         </span>
       </div>

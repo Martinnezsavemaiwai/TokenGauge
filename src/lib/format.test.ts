@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTimeUntil, formatNumber } from "./format";
+import { formatTimeUntil, formatNumber, bucketHour } from "./format";
 
 describe("formatTimeUntil", () => {
   it("returns 'now' for a past or elapsed target", () => {
@@ -20,5 +20,18 @@ describe("formatTimeUntil", () => {
 describe("formatNumber", () => {
   it("adds thousands separators", () => {
     expect(formatNumber(6800)).toBe("6,800");
+  });
+});
+
+describe("bucketHour", () => {
+  it("anchors the newest bucket to the snapshot's hour", () => {
+    expect(bucketHour(23, 0)).toBe(0); // just past midnight: newest bucket is 12 AM
+    expect(bucketHour(23, 14)).toBe(14);
+  });
+
+  it("walks backwards across midnight", () => {
+    expect(bucketHour(22, 0)).toBe(23); // hour before 12 AM is 11 PM, yesterday
+    expect(bucketHour(0, 0)).toBe(1); // oldest bucket is 23 hours back
+    expect(bucketHour(0, 14)).toBe(15);
   });
 });

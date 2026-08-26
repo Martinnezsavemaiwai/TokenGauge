@@ -23,8 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 
-# Agent skills (local only)
+# Agent skills and tool config (local only)
 .agents/
+.codex/
 
 # Tauri build artifacts
 src-tauri/target/
@@ -32,3 +33,5 @@ src-tauri/target/
 # Internal tool folders and requirements
 .impeccable/
 *Claude-first.md
+PRODUCT.md
+DESIGN.md

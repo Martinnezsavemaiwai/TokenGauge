@@ -42,6 +42,12 @@ export class MockProvider implements Provider {
       resetAt,
       currentModel: "Claude Sonnet",
       account: "user@example.com",
+      plan: "max_20x",
+      limits: [
+        { kind: "session", percent: this.percent, resetAt: new Date(now.getTime() + 32 * 60 * 1000) },
+        { kind: "weekly", percent: Math.min(100, this.percent * 0.8), resetAt },
+        { kind: "weekly_opus", percent: Math.min(100, this.percent * 0.45), resetAt },
+      ],
       source: "mock",
       updatedAt: now,
       history,

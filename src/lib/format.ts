@@ -43,3 +43,14 @@ export function timeAgo(date: Date): TimeAgo {
 export function formatNumber(n: number): string {
   return n.toLocaleString("en-US");
 }
+
+/**
+ * Clock hour a rolling-window bucket belongs to.
+ *
+ * `history` is 24 hourly buckets, oldest first, where index 23 is the hour the
+ * snapshot was taken. Reading the index itself as an hour pinned the chart's
+ * right edge to "11 PM" no matter the actual time.
+ */
+export function bucketHour(index: number, endHour: number): number {
+  return (endHour - (23 - index) + 24) % 24;
+}

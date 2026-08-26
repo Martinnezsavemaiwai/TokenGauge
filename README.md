@@ -6,16 +6,30 @@
 
 > Windows Taskbar Companion for AI Coding Assistants. Your AI coding usage, always one glance away.
 
-TokenGauge is a native-feeling Windows 11 system tray companion designed to help you monitor your usage for AI coding assistants (e.g. Claude Code, Codex, Aider) directly from the taskbar, without opening settings or web dashboards.
+TokenGauge is a native-feeling Windows 11 system tray companion that keeps your AI coding usage visible from the taskbar — no settings page, no web dashboard. It reads the limits your assistant actually enforces and shows how much of them you have spent.
+
+TokenGauge is the instrument; the assistant is what it is pointed at. Claude Code is the provider that ships today, and the frame is built to swap.
 
 ## Features
 
-- **Native Windows 11 Experience**: Minimalist, fast, and elegantly designed using Segoe UI and Framer Motion.
-- **Taskbar Badge**: Provides a quick glance at your current usage status via a dynamic tray icon.
-- **Hover Panel**: Hover over the tray icon to see a quick progress ring of your usage.
-- **Click Panel**: A detailed flyout with 24-hour usage history, remaining credits, and quick navigation.
-- **Smart Notifications**: Native Windows notifications when your usage reaches critical thresholds (60%, 80%, 90%, 100%).
-- **Provider Architecture**: Built to be extensible. Currently focused on Claude Code, with future support planned for Codex, OpenCode, and more.
+- **Three distances, three jobs**: the tray icon carries state, the hover popup answers "how much is left" in about two seconds, and the click flyout is the full dashboard.
+- **Real plan limits**: session (5 hr) and weekly (all models) windows straight from Anthropic's usage API, with the weekly Opus window on plans that meter it separately. Each has its own reset clock and its own severity color.
+- **Plan awareness**: your subscription tier (Pro, Max, …) is read from the local Claude Code credentials and shown in the panel.
+- **Provider selector**: the dashboard names what it is measuring. Adding a provider is a row in `src/providers/registry.ts`, not a redesign.
+- **Honest degradation**: when the OAuth token expires or the network drops, TokenGauge keeps the last good numbers and says *sync paused* — it never silently falls back to a made-up percentage.
+- **Smart notifications**: native Windows toasts at 60 / 80 / 90 / 100% of each metered window, once per crossing, fired by exactly one window so you never get doubles.
+- **Rolling 24-hour trend**: a cropped sparkline over the same rolling window the limits use.
+- **System-first theming**: follows the Windows light/dark setting by default, with manual override, plus English and Thai.
+
+## Interface
+
+| Surface | Trigger | Shows |
+| --- | --- | --- |
+| Tray icon | always visible | usage state via icon color |
+| Hover popup | hover the tray icon | ring, headline percentage, session reset, weekly meter |
+| Dashboard | click the tray icon | Overview · Models · History · Settings |
+
+`Models` and `History` are present in this release as designed empty states; their data layer (per-model tokens and daily history, read from the local session files) lands next.
 
 ## Installation
 
@@ -55,12 +69,11 @@ Download the latest installer from the [Releases](https://github.com/Martinnezsa
 
 ## Development
 
-TokenGauge comes with a built-in "Dev Mode" layout that lets you manually simulate usage thresholds (0% to 100%) to see how the UI reacts. Run `npm run dev` to see the web UI, or `npm run tauri dev` to test the full Windows tray integration.
+TokenGauge comes with a built-in "Dev Mode" layout that lets you manually simulate usage thresholds (0% to 100%) to see how the UI reacts. Run `npm run dev` to see the web UI, or `npm run tauri dev` to test the full Windows tray integration. `npm test` runs the unit tests.
 
 ## Architecture
 
-TokenGauge follows a strict **Provider-based Architecture**. 
-The React frontend is fully decoupled from the usage data sources. All providers (e.g., `ClaudeProvider`) must implement the `Provider` interface and return a normalized `UsageSnapshot`.
+TokenGauge follows a strict **Provider-based Architecture**. The React frontend is fully decoupled from the usage data sources: every provider implements `Provider` and returns a normalized `UsageSnapshot`, and the shell, thresholds, and notification engine never learn which one they are looking at.
 
 ```typescript
 export interface Provider {
@@ -70,6 +83,27 @@ export interface Provider {
   getUsage(): Promise<UsageSnapshot>;
 }
 ```
+
+A snapshot carries the metered windows it knows about, so a provider with different limits needs no UI change:
+
+```typescript
+interface UsageLimit {
+  kind: "session" | "weekly" | "weekly_opus";
+  percent: number;
+  resetAt?: Date;
+}
+```
+
+Register a provider in [`src/providers/registry.ts`](src/providers/registry.ts); planned ones are listed and disabled rather than hidden.
+
+## Privacy
+
+TokenGauge reads local files and talks to two hosts, both over HTTPS:
+
+- `api.anthropic.com/api/oauth/usage` — your rate-limit windows, authenticated with the OAuth token Claude Code already stored in `~/.claude/.credentials.json`. The token is read at request time and used for nothing else; TokenGauge never writes that file, never logs the token, and never sends it anywhere else.
+- `api.github.com` — unauthenticated release check for "Check for Updates".
+
+Your session files (`~/.claude/projects/**/*.jsonl`) are read locally for token counts and timestamps only. Nothing from them leaves the machine. There is no telemetry and no TokenGauge server.
 
 ## Contributing
 

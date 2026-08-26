@@ -24,10 +24,10 @@ export function RefreshIndicator({ lastRefresh, onRefresh, language = "en" }: Re
 
   return (
     <div
-      className="flex items-center justify-between text-xs px-2 pb-1"
+      className="flex items-center gap-2 text-xs min-w-0"
       style={{ color: "var(--color-text-muted)" }}
     >
-      <span>
+      <span className="truncate">
         {lastRefresh ? `${t(language, "updated")} ${formatTimeAgo(lastRefresh, language)}` : t(language, "notYetUpdated")}
       </span>
       <button

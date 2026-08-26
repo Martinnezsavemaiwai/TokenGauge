@@ -1,4 +1,4 @@
-import type { UsageState } from "../types/provider";
+import type { UsageLimit, UsageState } from "../types/provider";
 
 /** Derive the usage state from a percentage value (0–100). */
 export function deriveUsageState(percent: number): UsageState {
@@ -44,4 +44,31 @@ export function stateLabel(state: UsageState): string {
     case "error":
       return "Error";
   }
+}
+
+const PLAN_LABELS: Record<string, string> = {
+  free: "Free",
+  pro: "Pro",
+  max: "Max",
+  max_5x: "Max 5×",
+  max_20x: "Max 20×",
+  team: "Team",
+  enterprise: "Enterprise",
+};
+
+/** Display name for a subscription tier, e.g. "max_20x" → "Max 20×". */
+export function planLabel(plan?: string): string | null {
+  if (!plan) return null;
+  const key = plan.toLowerCase();
+  return PLAN_LABELS[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * The worst percentage across every metered window. The session ring can sit at
+ * 10% while the weekly quota is nearly spent — the tray icon and notifications
+ * have to track whichever limit actually bites first.
+ */
+export function peakPercent(limits: UsageLimit[] | undefined, fallback = 0): number {
+  if (!limits || limits.length === 0) return fallback;
+  return Math.max(fallback, ...limits.map((l) => l.percent));
 }
