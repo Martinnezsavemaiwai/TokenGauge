@@ -6,11 +6,11 @@ interface BrandMarkProps {
 }
 
 const CENTER = 12;
-const RADIUS = 9;
-const NEEDLE = 6;
-/** Open-bottom gauge: 135° → 405°, i.e. 270° of sweep. */
-const START = 135;
-const SWEEP = 270;
+const RADIUS = 8.25;
+const NEEDLE = 3.9;
+/** Open-bottom gauge: 138° → 402°, i.e. 264° of sweep. Mirrors scripts/gen-icons.mjs. */
+const START = 138;
+const SWEEP = 264;
 
 function point(angleDeg: number, radius: number) {
   const rad = (angleDeg * Math.PI) / 180;

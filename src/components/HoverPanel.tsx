@@ -10,6 +10,7 @@ import { LimitBars, PlanBadge } from "./LimitBars";
 import { Dot } from "./ProviderSelector";
 import { useSettings } from "../hooks/useSettings";
 import { providerEntry } from "../providers/registry";
+import { isLive } from "../lib/usage-state";
 
 interface HoverPanelProps {
   snapshot: UsageSnapshot;
@@ -32,6 +33,7 @@ export function HoverPanel({
   const isHovering = useRef(false);
   const { language, providerId } = useSettings();
   const provider = providerEntry(providerId);
+  const live = isLive(snapshot);
   // The ring already is the session window.
   const otherLimits = (snapshot.limits ?? []).filter((limit) => limit.kind !== "session");
 
@@ -87,7 +89,7 @@ export function HoverPanel({
         </div>
 
         <div className="flex items-center gap-4">
-          <ProgressRing percent={snapshot.usedPercent} state={state} size={88} strokeWidth={6} language={language} />
+          <ProgressRing percent={live ? snapshot.usedPercent : null} state={state} size={88} strokeWidth={6} language={language} />
           <UsageStats snapshot={snapshot} language={language} />
         </div>
 

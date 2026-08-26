@@ -18,6 +18,7 @@ import { EmptyState, ChartGlyph, StackGlyph } from "./EmptyState";
 import { checkForUpdate } from "../lib/updates";
 import { useSettings } from "../hooks/useSettings";
 import { providerEntry } from "../providers/registry";
+import { isLive } from "../lib/usage-state";
 import { t } from "../lib/i18n";
 
 interface ClickPanelProps {
@@ -43,6 +44,7 @@ export function ClickPanel({
   const { theme, language, providerId, setTheme, setLanguage, setProviderId } = useSettings();
   const [tab, setTab] = useState<TabId>("overview");
   const provider = providerEntry(providerId);
+  const live = isLive(snapshot);
   // The ring is the session window; a "Session 5h" bar under it would just
   // print the same number a second time.
   const otherLimits = (snapshot.limits ?? []).filter((limit) => limit.kind !== "session");
@@ -80,7 +82,9 @@ export function ClickPanel({
   return (
     <motion.div
       className="panel w-max flex flex-col"
-      style={{ minWidth: "28rem", maxWidth: "34rem", transformOrigin: "bottom center" }}
+      // The floor lives on the panel, not the scroll area, so `max-height` can win
+      // on a short screen instead of the tab bar being pushed out of the window.
+      style={{ minWidth: "28rem", maxWidth: "34rem", minHeight: "min(17rem, var(--panel-max-h, 17rem))", transformOrigin: "bottom center" }}
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.97 }}
@@ -109,7 +113,7 @@ export function ClickPanel({
           <ProviderSelector
             providerId={providerId}
             onSelect={setProviderId}
-            percent={snapshot.usedPercent}
+            percent={live ? snapshot.usedPercent : undefined}
             language={language}
           />
           <button
@@ -136,7 +140,7 @@ export function ClickPanel({
       </div>
 
       {/* Tab content */}
-      <div className="panel-scroll flex-1 min-h-0 px-5 py-4" style={{ minHeight: "17rem" }}>
+      <div className="panel-scroll flex-1 min-h-0 px-5 py-4">
         <AnimatePresence mode="wait">
           <motion.div
             key={tab}
@@ -150,7 +154,7 @@ export function ClickPanel({
               <>
                 <div className="flex items-center gap-4">
                   <ProgressRing
-                    percent={snapshot.usedPercent}
+                    percent={live ? snapshot.usedPercent : null}
                     state={state}
                     size={92}
                     strokeWidth={7}

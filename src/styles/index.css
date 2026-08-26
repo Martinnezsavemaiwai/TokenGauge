@@ -122,9 +122,11 @@ body {
   border: 1px solid var(--color-border);
   border-radius: 0.75rem;
   overflow-x: hidden;
-  /* Fixed cap, not 100vh: the window is sized from this box, and a vh-based cap
-     would grow itself every time the window grew. */
-  max-height: 35rem;
+  /* Not 100vh: the window is sized from this box, and a vh-based cap would grow
+     itself every time the window grew. `--panel-max-h` is screen-derived instead
+     (see useAutoResize) — without it a short display clips the panel's bottom
+     off, because #root is max-content/overflow:hidden and cannot scroll. */
+  max-height: min(35rem, var(--panel-max-h, 35rem));
 }
 
 /* Scrollable region inside a panel — appears only when scaled content overflows the fixed Tauri window */

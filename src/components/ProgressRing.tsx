@@ -5,7 +5,8 @@ import type { Language } from "../hooks/useSettings";
 import { t } from "../lib/i18n";
 
 interface ProgressRingProps {
-  percent: number;
+  /** `null` when no measured percentage exists — the ring reads "—" instead of 0%. */
+  percent: number | null;
   state: UsageState;
   /** Diameter in pixels */
   size?: number;
@@ -27,7 +28,9 @@ export function ProgressRing({
 }: ProgressRingProps) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  const filled = Math.min(100, Math.max(0, percent));
+  const unknown = percent === null || state === "no_access" || state === "error";
+  const filled = unknown ? 0 : Math.min(100, Math.max(0, percent));
+  const ringColor = stateColor(unknown ? "no_access" : state);
   const offset = circumference - (filled / 100) * circumference;
 
   return (
@@ -58,7 +61,7 @@ export function ProgressRing({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke={stateColor(state)}
+          stroke={ringColor}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={circumference}
@@ -72,12 +75,12 @@ export function ProgressRing({
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span
           className="font-display text-2xl font-bold leading-none tabular-nums"
-          style={{ color: stateColor(state) }}
+          style={{ color: ringColor }}
         >
-          {state === "no_access" || state === "error" ? "—" : `${Math.round(filled)}%`}
+          {unknown ? "—" : `${Math.round(filled)}%`}
         </span>
         <span className="text-[0.6875rem] mt-1" style={{ color: "var(--color-text-muted)" }}>
-          {state === "no_access" ? t(language, "noData") : state === "error" ? t(language, "error") : t(language, "used")}
+          {state === "error" ? t(language, "error") : unknown ? t(language, "noData") : t(language, "used")}
         </span>
       </div>
     </div>

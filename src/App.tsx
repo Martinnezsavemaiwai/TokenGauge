@@ -43,7 +43,7 @@ function App() {
 
   // The API windows only move every few minutes and the local scan walks every
   // active session file — polling every 3s bought nothing but I/O.
-  const { snapshot, state, lastRefresh, refresh } = useUsage(provider, 30_000);
+  const { snapshot, state, lastRefresh, refresh } = useUsage(provider, 30_000, view === "click");
 
   useIntegration(snapshot, state, view === "dev" ? "Mock" : entry.name);
   useAutoResize(view !== "dev");

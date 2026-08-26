@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { PROVIDERS } from "../providers/registry";
+import { PROVIDERS, providerEntry } from "../providers/registry";
 import { deriveUsageState, stateColor } from "../lib/usage-state";
 import type { Language } from "../hooks/useSettings";
 import { t } from "../lib/i18n";
@@ -22,7 +22,9 @@ interface ProviderSelectorProps {
 export function ProviderSelector({ providerId, onSelect, percent, language = "en" }: ProviderSelectorProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const active = PROVIDERS.find((p) => p.id === providerId) ?? PROVIDERS[0];
+  // Same resolution the panels use — a stored id for a `planned` provider must
+  // not name one provider in the header while the numbers below are another's.
+  const active = providerEntry(providerId);
 
   useEffect(() => {
     if (!open) return;

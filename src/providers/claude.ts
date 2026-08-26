@@ -5,7 +5,6 @@ interface RawUsage {
   usedPercent: number;
   remainingPercent: number;
   used: number;
-  limit: number;
   history: number[];
   apiUsedPercent: number | null;
   apiResetAt: string | null;
@@ -45,7 +44,6 @@ export class ClaudeProvider implements Provider {
         usedPercent: data.usedPercent,
         remainingPercent: data.remainingPercent,
         used: data.used,
-        limit: data.limit,
         history: data.history,
         apiUsedPercent: data.apiUsedPercent ?? undefined,
         resetAt: data.apiResetAt ? new Date(data.apiResetAt) : undefined,

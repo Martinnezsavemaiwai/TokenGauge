@@ -3,6 +3,7 @@ import type { UsageSnapshot } from "../types/provider";
 import { formatNumber, formatTimeUntil } from "../lib/format";
 import type { Language } from "../hooks/useSettings";
 import { t } from "../lib/i18n";
+import { isLive } from "../lib/usage-state";
 
 interface UsageStatsProps {
   snapshot: UsageSnapshot;
@@ -19,10 +20,10 @@ interface UsageStatsProps {
  * falls back to the raw local token count — never an invented percentage.
  */
 export function UsageStats({ snapshot, language = "en" }: UsageStatsProps) {
-  const isLive = snapshot.source === "hybrid" || snapshot.source === "mock";
+  const live = isLive(snapshot);
   const hasLocal = snapshot.used != null;
   // no_access / error: the ring already says "—", so say nothing here.
-  if (!isLive && !hasLocal) return null;
+  if (!live && !hasLocal) return null;
 
   const sessionReset = snapshot.limits?.find((limit) => limit.kind === "session")?.resetAt ?? snapshot.resetAt;
 
@@ -32,7 +33,7 @@ export function UsageStats({ snapshot, language = "en" }: UsageStatsProps) {
         className="text-base font-semibold truncate tabular-nums leading-tight"
         style={{ color: "var(--color-text-primary)" }}
       >
-        {isLive ? (
+        {live ? (
           <>
             {snapshot.usedPercent.toFixed(1)}%{" "}
             <span className="text-xs font-normal" style={{ color: "var(--color-text-secondary)" }}>
@@ -49,7 +50,7 @@ export function UsageStats({ snapshot, language = "en" }: UsageStatsProps) {
         )}
       </div>
 
-      {isLive && sessionReset && (
+      {live && sessionReset && (
         <MetaLine
           icon={
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -73,7 +74,7 @@ export function UsageStats({ snapshot, language = "en" }: UsageStatsProps) {
           }
         >
           {snapshot.currentModel}
-          {isLive && ` · ${t(language, snapshot.stale ? "syncStale" : "liveApiSyncActive")}`}
+          {live && ` · ${t(language, snapshot.stale ? "syncStale" : "liveApiSyncActive")}`}
         </MetaLine>
       )}
     </div>

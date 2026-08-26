@@ -1,4 +1,13 @@
-import type { UsageLimit, UsageState } from "../types/provider";
+import type { UsageLimit, UsageSnapshot, UsageState } from "../types/provider";
+
+/**
+ * Whether the snapshot carries a measured percentage at all. Without a live API
+ * window there is no trustworthy denominator — the local token count is real,
+ * any percentage derived from it is not.
+ */
+export function isLive(snapshot: Pick<UsageSnapshot, "source">): boolean {
+  return snapshot.source === "hybrid" || snapshot.source === "mock";
+}
 
 /** Derive the usage state from a percentage value (0–100). */
 export function deriveUsageState(percent: number): UsageState {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveUsageState, peakPercent, planLabel } from "./usage-state";
+import { deriveUsageState, isLive, peakPercent, planLabel } from "./usage-state";
 import type { UsageLimit } from "../types/provider";
 
 describe("deriveUsageState", () => {
@@ -49,5 +49,16 @@ describe("planLabel", () => {
 
   it("renders nothing without a plan", () => {
     expect(planLabel(undefined)).toBeNull();
+  });
+});
+
+describe("isLive", () => {
+  it.each([
+    ["hybrid", true],
+    ["mock", true],
+    ["local-file", false],
+    [undefined, false],
+  ] as const)("%s -> %s", (source, expected) => {
+    expect(isLive({ source })).toBe(expected);
   });
 });

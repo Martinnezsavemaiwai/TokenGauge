@@ -16,7 +16,6 @@ pub struct UsageData {
     pub used_percent: f64,
     pub remaining_percent: f64,
     pub used: u64,
-    pub limit: u64,
     pub history: Vec<f64>,
     pub api_used_percent: Option<f64>,
     pub api_reset_at: Option<String>,
@@ -103,9 +102,8 @@ async fn fetch_api_usage(base_dir: &std::path::Path) -> Option<ApiSnapshot> {
 
 #[tauri::command]
 async fn get_claude_usage() -> Result<UsageData, String> {
-    let (local_percent, total_credits, limit, history, base_dir, plan): (f64, u64, u64, Vec<f64>, Option<std::path::PathBuf>, Option<String>) = tokio::task::spawn_blocking(|| {
+    let (total_credits, history, base_dir, plan): (u64, Vec<f64>, Option<std::path::PathBuf>, Option<String>) = tokio::task::spawn_blocking(|| {
         let mut total_credits = 0u64;
-        let limit = 25_000_000u64;
         let base_dir = dirs::home_dir().map(|h| h.join(".claude"));
 
         let plan = base_dir
@@ -203,9 +201,7 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             }
         }
 
-        let local_percent = (total_credits as f64 / limit as f64) * 100.0;
-        
-        Ok((local_percent, total_credits, limit, history, base_dir, plan))
+        Ok((total_credits, history, base_dir, plan))
     }).await.unwrap_or_else(|_| Err("Failed to execute blocking task".to_string()))?;
 
     // Start from whatever the API last told us. A failed refresh must never drop
@@ -236,13 +232,14 @@ async fn get_claude_usage() -> Result<UsageData, String> {
         }
     }
 
-    let used_percent = snapshot.session.unwrap_or_else(|| local_percent.min(100.0));
+    // No API window means no trustworthy denominator. The raw token count is
+    // still reported in `used`; a percentage is only ever the measured one.
+    let used_percent = snapshot.session.unwrap_or(0.0);
 
     Ok(UsageData {
         used_percent,
         remaining_percent: (100.0 - used_percent).max(0.0),
         used: total_credits,
-        limit,
         history,
         api_used_percent: snapshot.session,
         api_reset_at: snapshot.session_reset,
@@ -278,6 +275,10 @@ fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// The tray glyph, not the app tile: `icon.ico` is a 256px Windows plate that
+/// turns to mush at 16px. See scripts/gen-icons.mjs.
+const TRAY_NORMAL_ICON: &[u8] = include_bytes!("../icons/icon_normal.ico");
+
 #[tauri::command]
 fn set_tray_state(app: tauri::AppHandle, state: String) {
     if let Some(tray) = app.tray_by_id("main") {
@@ -285,7 +286,7 @@ fn set_tray_state(app: tauri::AppHandle, state: String) {
             "warning" => include_bytes!("../icons/icon_warning.ico").as_slice(),
             "critical" => include_bytes!("../icons/icon_critical.ico").as_slice(),
             "disabled" => include_bytes!("../icons/icon_disabled.ico").as_slice(),
-            _ => include_bytes!("../icons/icon.ico").as_slice(),
+            _ => TRAY_NORMAL_ICON,
         };
         
         if let Ok(image) = Image::from_bytes(icon_bytes) {
@@ -294,27 +295,36 @@ fn set_tray_state(app: tauri::AppHandle, state: String) {
     }
 }
 
+/// Last known tray icon rect in physical pixels (x, y, width).
+static TRAY_ANCHOR: std::sync::Mutex<Option<(i32, i32, i32)>> = std::sync::Mutex::new(None);
+
 fn position_window(window: &tauri::WebviewWindow, tray_rect: tauri::Rect) {
-    if let Ok(Some(monitor)) = window.current_monitor() {
-        let scale_factor = monitor.scale_factor();
-        let window_size = window.outer_size().unwrap_or_default();
-        
-        let physical_pos = tray_rect.position.to_physical::<i32>(scale_factor);
-        let physical_size = tray_rect.size.to_physical::<u32>(scale_factor);
-        
-        let tray_x = physical_pos.x;
-        let tray_y = physical_pos.y;
-        let tray_w = physical_size.width as i32;
-        
-        // Center horizontally above tray icon
-        let x = tray_x + (tray_w / 2) - (window_size.width as i32 / 2);
-        
-        // Position vertically above tray icon (with small gap)
-        let gap = 12; // pixels
-        let y = tray_y - window_size.height as i32 - gap;
-        
-        let _ = window.set_position(Position::Physical(PhysicalPosition { x, y }));
+    let Ok(Some(monitor)) = window.current_monitor() else { return };
+    let scale_factor = monitor.scale_factor();
+    let physical_pos = tray_rect.position.to_physical::<i32>(scale_factor);
+    let physical_size = tray_rect.size.to_physical::<u32>(scale_factor);
+
+    if let Ok(mut anchor) = TRAY_ANCHOR.lock() {
+        *anchor = Some((physical_pos.x, physical_pos.y, physical_size.width as i32));
     }
+    anchor_window(window);
+}
+
+/// Re-apply the tray anchor to the window's *current* size.
+///
+/// The panel hangs above the tray, so it is anchored by its bottom edge while
+/// `set_position` addresses its top-left. Any resize therefore has to move the
+/// window too — switching tabs in an open flyout used to walk its bottom edge
+/// down over the taskbar.
+fn anchor_window(window: &tauri::WebviewWindow) {
+    let Some((tray_x, tray_y, tray_w)) = TRAY_ANCHOR.lock().ok().and_then(|a| *a) else { return };
+    let Ok(size) = window.outer_size() else { return };
+
+    let gap = 12; // pixels
+    let x = tray_x + (tray_w / 2) - (size.width as i32 / 2);
+    let y = tray_y - size.height as i32 - gap;
+
+    let _ = window.set_position(Position::Physical(PhysicalPosition { x, y }));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -329,7 +339,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![close_hover_panel, close_click_panel, set_tray_state, get_claude_usage, exit_app])
         .setup(|app| {
             let _tray = TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(Image::from_bytes(TRAY_NORMAL_ICON)?)
                 .tooltip("TokenGauge")
                 .on_tray_icon_event(|tray, event| {
                     let app = tray.app_handle();
@@ -364,6 +374,16 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            for label in ["hover", "click"] {
+                let Some(window) = app.get_webview_window(label) else { continue };
+                let target = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Resized(_) = event {
+                        anchor_window(&target);
+                    }
+                });
+            }
 
             Ok(())
         })
