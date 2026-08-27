@@ -1,8 +1,8 @@
 [package]
 name = "tokengauge"
-version = "0.2.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.2.1"
+description = "Windows taskbar companion for AI coding assistant usage"
+authors = ["Martinnezsavemaiwai"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,9 +23,9 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-notification = "2.3.3"
-walkdir = "2.5.0"
 dirs = "6.0.0"
 tokio = { version = "1.53.1", features = ["rt-multi-thread"] }
 chrono = "0.4.45"
 reqwest = { version = "0.12", features = ["json"] }
 tauri-plugin-autostart = "2.5.1"
+tauri-plugin-single-instance = { version = "2.4.3", default-features = false }

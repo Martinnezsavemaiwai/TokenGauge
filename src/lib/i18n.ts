@@ -65,7 +65,9 @@ export const strings = {
     notifyUpdateTitle: "{provider} Usage Update",
     notifyPercentBody: "You have used {percent}% of your current limit.",
     notifyWeeklyTitle: "{provider} Weekly Limit",
-    notifyWeeklyBody: "You have used {percent}% of your weekly limit.",
+    notifyWeeklyBody: "You have used {percent}% of your weekly limit (all models).",
+    notifyWeeklyOpusTitle: "{provider} Weekly Opus Limit",
+    notifyWeeklyOpusBody: "You have used {percent}% of your weekly Opus limit.",
   },
   th: {
     planBadge: "แพ็กเกจ {plan}",
@@ -131,7 +133,9 @@ export const strings = {
     notifyUpdateTitle: "{provider} อัปเดตการใช้งาน",
     notifyPercentBody: "คุณใช้โควต้ารอบปัจจุบันไปแล้ว {percent}%",
     notifyWeeklyTitle: "{provider} โควต้ารายสัปดาห์",
-    notifyWeeklyBody: "คุณใช้โควต้ารายสัปดาห์ไปแล้ว {percent}%",
+    notifyWeeklyBody: "คุณใช้โควต้ารายสัปดาห์ (ทุกโมเดล) ไปแล้ว {percent}%",
+    notifyWeeklyOpusTitle: "{provider} โควต้า Opus รายสัปดาห์",
+    notifyWeeklyOpusBody: "คุณใช้โควต้า Opus รายสัปดาห์ไปแล้ว {percent}%",
   },
 } as const;
 

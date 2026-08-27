@@ -282,10 +282,13 @@ const TRAY_NORMAL_ICON: &[u8] = include_bytes!("../icons/icon_normal.ico");
 #[tauri::command]
 fn set_tray_state(app: tauri::AppHandle, state: String) {
     if let Some(tray) = app.tray_by_id("main") {
+        // These arms are `UsageState` values, spelled exactly as the frontend
+        // sends them. "full" used to fall through to the normal icon, so a spent
+        // quota showed the same half-filled orange gauge as a fresh one.
         let icon_bytes = match state.as_str() {
             "warning" => include_bytes!("../icons/icon_warning.ico").as_slice(),
-            "critical" => include_bytes!("../icons/icon_critical.ico").as_slice(),
-            "disabled" => include_bytes!("../icons/icon_disabled.ico").as_slice(),
+            "critical" | "full" => include_bytes!("../icons/icon_critical.ico").as_slice(),
+            "loading" | "no_access" | "error" => include_bytes!("../icons/icon_disabled.ico").as_slice(),
             _ => TRAY_NORMAL_ICON,
         };
         
@@ -299,37 +302,102 @@ fn set_tray_state(app: tauri::AppHandle, state: String) {
 static TRAY_ANCHOR: std::sync::Mutex<Option<(i32, i32, i32)>> = std::sync::Mutex::new(None);
 
 fn position_window(window: &tauri::WebviewWindow, tray_rect: tauri::Rect) {
-    let Ok(Some(monitor)) = window.current_monitor() else { return };
-    let scale_factor = monitor.scale_factor();
-    let physical_pos = tray_rect.position.to_physical::<i32>(scale_factor);
-    let physical_size = tray_rect.size.to_physical::<u32>(scale_factor);
+    // `tray-icon` already reports this rect in physical pixels, so there is no
+    // scale factor left to apply. Asking the *window's* monitor for one was
+    // worse than pointless on a mixed-DPI desktop: it needed an early return
+    // when the lookup failed, and that return skipped writing the anchor — so
+    // the flyout opened wherever the window had last been left.
+    let position = tray_rect.position.to_physical::<i32>(1.0);
+    let size = tray_rect.size.to_physical::<u32>(1.0);
 
     if let Ok(mut anchor) = TRAY_ANCHOR.lock() {
-        *anchor = Some((physical_pos.x, physical_pos.y, physical_size.width as i32));
+        *anchor = Some((position.x, position.y, size.width as i32));
     }
     anchor_window(window);
 }
 
-/// Re-apply the tray anchor to the window's *current* size.
-///
-/// The panel hangs above the tray, so it is anchored by its bottom edge while
-/// `set_position` addresses its top-left. Any resize therefore has to move the
-/// window too — switching tabs in an open flyout used to walk its bottom edge
-/// down over the taskbar.
+/// Where a flyout sits: centred over the tray icon, hanging above it, and kept
+/// inside `work_area`. Physical pixels throughout; `work_area` is
+/// (x, y, width, height), or `None` when the monitor could not be identified.
+fn flyout_position(
+    tray: (i32, i32, i32),
+    size: (u32, u32),
+    work_area: Option<(i32, i32, u32, u32)>,
+) -> (i32, i32) {
+    const GAP: i32 = 12;
+    let (tray_x, tray_y, tray_w) = tray;
+    let (w, h) = (size.0 as i32, size.1 as i32);
+
+    let mut x = tray_x + (tray_w / 2) - (w / 2);
+    let mut y = tray_y - h - GAP;
+
+    if let Some((area_x, area_y, area_w, area_h)) = work_area {
+        // `.max` comes last on purpose: a panel bigger than the work area still
+        // starts on-screen instead of being shoved off the opposite edge.
+        x = x.min(area_x + area_w as i32 - w).max(area_x);
+        y = y.min(area_y + area_h as i32 - h).max(area_y);
+    }
+
+    (x, y)
+}
+
+/// Park the window on the tray anchor at its current size. Called when a flyout
+/// opens — not on every resize, which is what used to drag it back across
+/// monitors.
 fn anchor_window(window: &tauri::WebviewWindow) {
-    let Some((tray_x, tray_y, tray_w)) = TRAY_ANCHOR.lock().ok().and_then(|a| *a) else { return };
+    let Some(tray) = TRAY_ANCHOR.lock().ok().and_then(|a| *a) else { return };
     let Ok(size) = window.outer_size() else { return };
 
-    let gap = 12; // pixels
-    let x = tray_x + (tray_w / 2) - (size.width as i32 / 2);
-    let y = tray_y - size.height as i32 - gap;
+    // The monitor the *tray* is on, not the one the window was last left on.
+    // With one monitor at 100% and another at 150% those are different
+    // rectangles, and using the wrong one puts the panel off-screen.
+    let work_area = window
+        .monitor_from_point(tray.0 as f64, tray.1 as f64)
+        .ok()
+        .flatten()
+        .map(|monitor| {
+            let area = monitor.work_area();
+            (area.position.x, area.position.y, area.size.width, area.size.height)
+        });
 
+    let (x, y) = flyout_position(tray, (size.width, size.height), work_area);
     let _ = window.set_position(Position::Physical(PhysicalPosition { x, y }));
+}
+
+/// Hold the window's bottom edge still across a resize.
+///
+/// The panel grows upward from the taskbar, but `set_position` addresses its
+/// top-left, so a resize has to move the window as well — otherwise switching
+/// tabs walks its bottom edge down over the taskbar. This used to re-snap to
+/// the tray anchor instead, which meant a DPI change (exactly what crossing to
+/// a differently-scaled monitor triggers) resized the window and immediately
+/// yanked it back to the tray. That is why the flyout could not be moved to the
+/// second screen.
+fn keep_bottom_edge(window: &tauri::WebviewWindow, last_height: &std::sync::Mutex<u32>, new_height: u32) {
+    let Ok(mut last) = last_height.lock() else { return };
+    let previous = std::mem::replace(&mut *last, new_height);
+    // 0 is "no measurement yet" — the size the window was built with.
+    if previous == 0 || previous == new_height {
+        return;
+    }
+    let Ok(position) = window.outer_position() else { return };
+    let y = position.y + previous as i32 - new_height as i32;
+    let _ = window.set_position(Position::Physical(PhysicalPosition { x: position.x, y }));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be first. Nothing else stopped a second copy from starting — and a
+        // second copy means a second tray icon and two of every notification.
+        // Launching again just surfaces the dashboard of the copy already running.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(click) = app.get_webview_window("click") {
+                let _ = click.show();
+                anchor_window(&click);
+                let _ = click.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
@@ -378,9 +446,11 @@ pub fn run() {
             for label in ["hover", "click"] {
                 let Some(window) = app.get_webview_window(label) else { continue };
                 let target = window.clone();
+                // Per-window, so the two flyouts cannot read each other's height.
+                let last_height = std::sync::Mutex::new(0u32);
                 window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Resized(_) = event {
-                        anchor_window(&target);
+                    if let tauri::WindowEvent::Resized(size) = event {
+                        keep_bottom_edge(&target, &last_height, size.height);
                     }
                 });
             }
@@ -389,4 +459,57 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flyout_position;
+
+    /// 1920x1080 primary at 100%, 48px taskbar — the monitor the tray lives on.
+    const PRIMARY: Option<(i32, i32, u32, u32)> = Some((0, 0, 1920, 1032));
+
+    #[test]
+    fn centres_the_flyout_above_the_tray_icon() {
+        let (x, y) = flyout_position((1500, 1040, 24), (380, 300), PRIMARY);
+        assert_eq!(x, 1500 + 12 - 190);
+        assert_eq!(y, 1040 - 300 - 12);
+    }
+
+    #[test]
+    fn keeps_a_tray_near_the_right_edge_on_screen() {
+        let (x, _) = flyout_position((1890, 1040, 24), (380, 300), PRIMARY);
+        assert!(x + 380 <= 1920, "flyout ran off the right edge: x={x}");
+    }
+
+    #[test]
+    fn never_starts_above_the_work_area() {
+        // A panel taller than the space above the tray would get a negative y.
+        let (_, y) = flyout_position((960, 200, 24), (380, 900), PRIMARY);
+        assert!(y >= 0, "flyout started off the top of the screen: y={y}");
+    }
+
+    #[test]
+    fn stays_inside_a_secondary_monitor_with_its_own_origin() {
+        // Second screen right of the primary and 86px higher — a real layout,
+        // and the one where an unclamped position lands on no monitor at all.
+        let secondary = Some((1920, -86, 2560, 1354));
+        let (x, y) = flyout_position((4400, 1200, 24), (380, 300), secondary);
+        assert!(x >= 1920 && x + 380 <= 1920 + 2560, "x escaped the monitor: {x}");
+        assert!(y >= -86, "y escaped the monitor: {y}");
+    }
+
+    #[test]
+    fn without_a_known_monitor_the_position_is_left_unclamped() {
+        // Pins what the clamp is actually doing: these same inputs put the
+        // flyout 172px past the right edge when no work area is known.
+        let (x, _) = flyout_position((1890, 1040, 24), (380, 300), None);
+        assert_eq!(x, 1712);
+        assert!(x + 380 > 1920);
+    }
+
+    #[test]
+    fn a_panel_taller_than_the_screen_still_starts_on_screen() {
+        let (_, y) = flyout_position((960, 1040, 24), (380, 2000), PRIMARY);
+        assert_eq!(y, 0);
+    }
 }

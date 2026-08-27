@@ -8,7 +8,7 @@
 
 TokenGauge is a native-feeling Windows 11 system tray companion that keeps your AI coding usage visible from the taskbar — no settings page, no web dashboard. It reads the limits your assistant actually enforces and shows how much of them you have spent.
 
-TokenGauge is the instrument; the assistant is what it is pointed at. Claude Code is the provider that ships today, and the frame is built to swap.
+TokenGauge is the instrument; the assistant is what it is pointed at. Claude Code is the provider that ships today, Codex is next, and the frame is built to swap.
 
 ## Features
 
@@ -17,8 +17,8 @@ TokenGauge is the instrument; the assistant is what it is pointed at. Claude Cod
 - **Plan awareness**: your subscription tier (Pro, Max, …) is read from the local Claude Code credentials and shown in the panel.
 - **Provider selector**: the dashboard names what it is measuring. Adding a provider is a row in `src/providers/registry.ts`, not a redesign.
 - **Honest degradation**: when the OAuth token expires or the network drops, TokenGauge keeps the last good numbers and says *sync paused* — it never silently falls back to a made-up percentage.
-- **Smart notifications**: native Windows toasts at 60 / 80 / 90 / 100% of each metered window, once per crossing, fired by exactly one window so you never get doubles.
-- **Rolling 24-hour trend**: a cropped sparkline over the same rolling window the limits use.
+- **Smart notifications**: native Windows toasts at 60 / 80 / 90 / 100% of each metered window. Each threshold fires once per limit period — the marks are keyed to the window's reset time and persisted, so relaunching TokenGauge does not re-announce what you already saw — and exactly one tray window owns them so you never get doubles. Only one copy of TokenGauge can run at a time, so a second launch cannot double them either.
+- **Rolling 24-hour trend**: a sparkline over the same rolling 24 hours the limits use, cropped to the stretch you were actually active in. The axis prints the real clock hours of that stretch, so a quiet night does not render as dead air.
 - **System-first theming**: follows the Windows light/dark setting by default, with manual override, plus English and Thai.
 
 ## Interface
@@ -28,6 +28,8 @@ TokenGauge is the instrument; the assistant is what it is pointed at. Claude Cod
 | Tray icon | always visible | usage state via icon color |
 | Hover popup | hover the tray icon | ring, headline percentage, session reset, weekly meter |
 | Dashboard | click the tray icon | Overview · Models · History · Settings |
+
+Flyouts are positioned against the monitor the tray icon is on and clamped to its work area, so they behave on multi-monitor desktops with different scaling per screen.
 
 `Models` and `History` are present in this release as designed empty states; their data layer (per-model tokens and daily history, read from the local session files) lands next.
 
@@ -94,14 +96,14 @@ interface UsageLimit {
 }
 ```
 
-Register a provider in [`src/providers/registry.ts`](src/providers/registry.ts); planned ones are listed and disabled rather than hidden.
+Register a provider in [`src/providers/registry.ts`](src/providers/registry.ts); planned ones are listed and disabled rather than hidden. Today that is Claude Code (live) and Codex (planned).
 
 ## Privacy
 
 TokenGauge reads local files and talks to two hosts, both over HTTPS:
 
 - `api.anthropic.com/api/oauth/usage` — your rate-limit windows, authenticated with the OAuth token Claude Code already stored in `~/.claude/.credentials.json`. The token is read at request time and used for nothing else; TokenGauge never writes that file, never logs the token, and never sends it anywhere else.
-- `api.github.com` — unauthenticated release check for "Check for Updates".
+- `api.github.com` — unauthenticated release listing for "Check for Updates".
 
 Your session files (`~/.claude/projects/**/*.jsonl`) are read locally for token counts and timestamps only. Nothing from them leaves the machine. There is no telemetry and no TokenGauge server.
 

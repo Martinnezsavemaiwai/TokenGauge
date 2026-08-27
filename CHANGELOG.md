@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.1] - 2026-08-27
+### Fixed
+- The tray icon never turned red. `set_tray_state` matched `"critical"` but not `"full"`, so a spent quota fell through to the default arm and kept showing the half-filled orange gauge — the hover panel read 100% while the taskbar still looked like 55%. The states that mean "no reading" (`loading`, `no_access`, `error`) now show the disabled icon instead of the normal one, which is what it was drawn for.
+- Threshold notifications were announced again after every relaunch, because the "already announced" marks lived in a React ref that died with the webview. They are now persisted per limit window and keyed to that window's reset timestamp, so each threshold fires once per period and a new period re-arms on its own.
+- Nothing stopped a second copy of TokenGauge from starting, and a second copy meant a second tray icon and two of every notification. Only one instance runs now; launching again surfaces the dashboard of the copy already running.
+- `weekly` and `weekly_opus` shared one notification title and a body that said "weekly limit" for both, so two different windows crossing a threshold at the same time read as one notification delivered twice. The Opus window has its own wording.
+- The flyout broke on a multi-monitor desktop with mixed scaling (e.g. a 1920x1080 screen at 100% next to a 2560x1440 at 150%). Three separate faults: `position_window` converted the tray rect with the scale factor of whichever monitor the *window* was on, and had to bail out — without writing the tray anchor — when that lookup failed, so the flyout opened wherever the window was last left; the computed position was never clamped to a monitor, so it could land on no screen at all; and the resize handler re-snapped the window to the tray anchor on *every* resize, which meant crossing to a differently-scaled monitor fired a DPI change, resized the window, and immediately yanked it back. Position is now clamped to the work area of the monitor the tray is on, and a resize holds the window's own bottom edge instead of re-snapping to the tray.
+- "Check for Updates" always answered *Could not check for updates*. It asked GitHub for `/releases/latest`, which ignores pre-releases and 404s when every published release is one. It now reads the releases list, and only reports an update when the published version is actually newer than the running one.
+
+### Changed
+- The app is named **TokenGauge**, not `tokengauge` — shortcut, Start Menu entry, installed binary, installer filenames, and the app name Windows prints on every toast.
+- The provider list is Claude Code and Codex. OpenCode and Aider were listed as planned with no data source behind them and have been removed from the selector; a stored id for a removed provider falls back to Claude Code.
+- Dropped the `icon` option from usage notifications — `tauri-plugin-notification` ignores it on Windows, where the toast icon comes from the registered app id.
+- Dropped the unused `walkdir` dependency and replaced the `"A Tauri App"` / `authors = ["you"]` template metadata in `Cargo.toml`.
+- Removed the leftover Vite template assets (`public/vite.svg`, `public/tauri.svg`) and the favicon link to them; the tray windows have no browser chrome to show a favicon in.
+
 ## [0.2.0] - 2026-08-27
 ### Added
 - Plan limits: session (5 hr), weekly (all models), and weekly Opus windows from the Anthropic usage API, each with its own reset clock and severity color.

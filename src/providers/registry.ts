@@ -18,8 +18,6 @@ export interface ProviderEntry {
 export const PROVIDERS: ProviderEntry[] = [
   { id: "claude", name: "Claude Code", dot: "#D97757", status: "available", create: () => new ClaudeProvider() },
   { id: "codex", name: "Codex", dot: "#8E8E93", status: "planned" },
-  { id: "opencode", name: "OpenCode", dot: "#8B7BD8", status: "planned" },
-  { id: "aider", name: "Aider", dot: "#5FA377", status: "planned" },
 ];
 
 export const DEFAULT_PROVIDER_ID = "claude";

@@ -81,3 +81,32 @@ export function peakPercent(limits: UsageLimit[] | undefined, fallback = 0): num
   if (!limits || limits.length === 0) return fallback;
   return Math.max(fallback, ...limits.map((l) => l.percent));
 }
+
+/** Percentages that earn a notification, highest first. */
+const NOTIFY_THRESHOLDS = [100, 90, 80, 60] as const;
+
+/** The highest threshold already announced for one limit window. */
+export interface ThresholdMark {
+  /** Identifies the window period — the reset timestamp, or "" if the provider reports none. */
+  window: string;
+  mark: number;
+}
+
+/**
+ * The threshold `percent` newly crosses, or `null` when nothing new was reached.
+ *
+ * Announcements are keyed to the *window period*, not to process lifetime: a
+ * mark carried over from a previous reset (or from a previous launch) would
+ * otherwise either re-fire every poll or silence the next period entirely.
+ */
+export function crossedThreshold(
+  percent: number,
+  previous: ThresholdMark | undefined,
+  window: string,
+): number | null {
+  const carried = previous?.window === window ? previous.mark : 0;
+  // Re-arm on a reading that dropped: covers providers that report no reset clock.
+  const mark = percent < carried - 5 ? 0 : carried;
+  const crossed = NOTIFY_THRESHOLDS.find((threshold) => percent >= threshold) ?? 0;
+  return crossed > mark ? crossed : null;
+}

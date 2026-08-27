@@ -1,12 +1,35 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import type { UsageSnapshot, UsageState } from "../types/provider";
-import { deriveUsageState, peakPercent } from "../lib/usage-state";
+import type { LimitKind, UsageSnapshot, UsageState } from "../types/provider";
+import { crossedThreshold, deriveUsageState, peakPercent, type ThresholdMark } from "../lib/usage-state";
 import { useSettings } from "./useSettings";
 import { t, type StringKey } from "../lib/i18n";
 
-const THRESHOLDS = [100, 90, 80, 60] as const;
+/**
+ * Announced thresholds live in localStorage, not in a ref: a ref only remembers
+ * for as long as this webview does, so every relaunch re-announced the window
+ * the user was already sitting in. localStorage is also shared between the two
+ * tray windows, which makes the single-notifier rule below belt *and* braces.
+ */
+const MARKS_KEY = "tokengauge-announced";
+
+function readMarks(): Record<string, ThresholdMark> {
+  try {
+    const raw = localStorage.getItem(MARKS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeMarks(marks: Record<string, ThresholdMark>) {
+  try {
+    localStorage.setItem(MARKS_KEY, JSON.stringify(marks));
+  } catch {
+    // Nothing to do — worst case a threshold is announced twice.
+  }
+}
 
 /**
  * TokenGauge runs this same app in two windows (hover + click), so anything with
@@ -23,7 +46,7 @@ async function notify(title: string, body: string) {
     permissionGranted = (await requestPermission()) === "granted";
   }
   if (permissionGranted) {
-    sendNotification({ title, body, icon: "icon.ico" });
+    sendNotification({ title, body });
   }
 }
 
@@ -32,9 +55,6 @@ export function useIntegration(
   state: UsageState,
   providerName: string,
 ) {
-  const previousState = useRef<UsageState | null>(null);
-  /** Highest threshold already announced, per limit window. */
-  const announced = useRef<Record<string, number>>({});
   const { language } = useSettings();
 
   // The tray icon reflects whichever limit bites first, not just the session.
@@ -46,10 +66,7 @@ export function useIntegration(
   // Sync Tray Icon
   useEffect(() => {
     if (!isNotifier()) return;
-    if (previousState.current !== trayState) {
-      invoke("set_tray_state", { state: trayState }).catch(console.error);
-      previousState.current = trayState;
-    }
+    invoke("set_tray_state", { state: trayState }).catch(console.error);
   }, [trayState]);
 
   // Native Notifications
@@ -60,19 +77,22 @@ export function useIntegration(
     // whichever instrument is being read.
     const title = (key: StringKey) => t(language, key).replace("{provider}", providerName);
 
-    const check = (key: string, percent: number, weekly: boolean) => {
-      const mark = announced.current[key] ?? 0;
-      // Window rolled over (or usage was recomputed downwards) — re-arm.
-      if (percent < mark - 5) announced.current[key] = 0;
+    const check = (kind: LimitKind, percent: number, resetAt: Date | undefined) => {
+      const marks = readMarks();
+      const window = resetAt?.toISOString() ?? "";
+      const crossed = crossedThreshold(percent, marks[kind], window);
+      if (crossed === null) return;
+      writeMarks({ ...marks, [kind]: { window, mark: crossed } });
 
-      const crossed = THRESHOLDS.find((threshold) => percent >= threshold) ?? 0;
-      if (crossed === 0 || crossed <= (announced.current[key] ?? 0)) return;
-      announced.current[key] = crossed;
-
-      if (weekly) {
+      // Each window gets its own wording. Sharing one "weekly limit" string
+      // across `weekly` and `weekly_opus` made two different limits crossing at
+      // once read as the same notification delivered twice.
+      if (kind === "weekly" || kind === "weekly_opus") {
+        const opus = kind === "weekly_opus";
         notify(
-          title("notifyWeeklyTitle"),
-          t(language, "notifyWeeklyBody").replace("{percent}", String(Math.floor(percent))),
+          title(opus ? "notifyWeeklyOpusTitle" : "notifyWeeklyTitle"),
+          t(language, opus ? "notifyWeeklyOpusBody" : "notifyWeeklyBody")
+            .replace("{percent}", String(Math.floor(percent))),
         ).catch(console.error);
         return;
       }
@@ -95,9 +115,9 @@ export function useIntegration(
       ).catch(console.error);
     };
 
-    check("session", snapshot.usedPercent, false);
+    check("session", snapshot.usedPercent, snapshot.resetAt);
     for (const limit of snapshot.limits ?? []) {
-      if (limit.kind !== "session") check(limit.kind, limit.percent, true);
+      if (limit.kind !== "session") check(limit.kind, limit.percent, limit.resetAt);
     }
   }, [snapshot, language, providerName]);
 }
