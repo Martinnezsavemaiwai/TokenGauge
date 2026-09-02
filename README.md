@@ -18,6 +18,9 @@ TokenGauge is the instrument; the assistant is what it is pointed at. Claude Cod
 - **Provider selector**: the dashboard names what it is measuring. Adding a provider is a row in `src/providers/registry.ts`, not a redesign.
 - **Honest degradation**: when the OAuth token expires or the network drops, TokenGauge keeps the last good numbers and says *sync paused* — it never silently falls back to a made-up percentage.
 - **Smart notifications**: native Windows toasts at 60 / 80 / 90 / 100% of each metered window. Each threshold fires once per limit period — the marks are keyed to the window's reset time and persisted, so relaunching TokenGauge does not re-announce what you already saw — and exactly one tray window owns them so you never get doubles. Only one copy of TokenGauge can run at a time, so a second launch cannot double them either.
+- **Time to limit**: when the current pace would spend the session window before it resets, the panel says how long that is — derived from the tokens burned in the last hour, not from a guess. It stays quiet when the window resets first.
+- **Per-model breakdown**: which models spent the last 24 hours, in tokens and share, read from the local session files. Tokens, never a percentage of a limit — the API meters the plan, not the model.
+- **Daily history**: tokens per day for the last 7 days, read from the local session archives when you open the tab — never on the poll, so the 30-second refresh stays off files it has no reason to touch. A quiet day is drawn as the zero it was.
 - **Rolling 24-hour trend**: a sparkline over the same rolling 24 hours the limits use, cropped to the stretch you were actually active in. The axis prints the real clock hours of that stretch, so a quiet night does not render as dead air.
 - **System-first theming**: follows the Windows light/dark setting by default, with manual override, plus English and Thai.
 
@@ -30,8 +33,6 @@ TokenGauge is the instrument; the assistant is what it is pointed at. Claude Cod
 | Dashboard | click the tray icon | Overview · Models · History · Settings |
 
 Flyouts are positioned against the monitor the tray icon is on and clamped to its work area, so they behave on multi-monitor desktops with different scaling per screen.
-
-`Models` and `History` are present in this release as designed empty states; their data layer (per-model tokens and daily history, read from the local session files) lands next.
 
 ## Installation
 
