@@ -8,6 +8,19 @@ export interface UsageLimit {
   resetAt?: Date;
 }
 
+/** One model's tokens over the rolling 24 hours. No per-model limit exists. */
+export interface ModelUsage {
+  model: string;
+  credits: number;
+}
+
+/** One local calendar day's tokens, from the provider's own local records. */
+export interface DayUsage {
+  /** ISO `YYYY-MM-DD`, local time. */
+  date: string;
+  credits: number;
+}
+
 export interface UsageSnapshot {
   usedPercent: number;
   remainingPercent: number;
@@ -27,6 +40,8 @@ export interface UsageSnapshot {
   limits?: UsageLimit[];
   /** Live sync is failing — these are the last known good numbers */
   stale?: boolean;
+  /** Seconds since the provider's API last answered — how old `stale` numbers are */
+  syncAgeSec?: number;
 
   /** Where this data came from (for debugging) */
   source?: "local-file" | "cli" | "api" | "mock" | "hybrid";
@@ -34,6 +49,8 @@ export interface UsageSnapshot {
   updatedAt?: Date;
 
   history?: number[]; // 24 hourly buckets
+  /** Per-model tokens over those same 24 hours, biggest first */
+  models?: ModelUsage[];
   apiUsedPercent?: number;
 }
 
@@ -51,4 +68,6 @@ export interface Provider {
   name: string;
   icon: string;
   getUsage(): Promise<UsageSnapshot>;
+  /** Tokens per day, oldest first — only providers that keep local records have it. */
+  getHistory?(): Promise<DayUsage[]>;
 }

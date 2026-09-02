@@ -54,3 +54,25 @@ export function formatNumber(n: number): string {
 export function bucketHour(index: number, endHour: number): number {
   return (endHour - (23 - index) + 24) % 24;
 }
+
+/**
+ * Compact form of a token count, for rows where the comparison matters more
+ * than the digits: 277,099,237 becomes "277.1M". Small counts stay exact —
+ * "6,800" is already scannable, and shortening it would hide precision for
+ * nothing. The exact value stays in the element tooltip.
+ */
+const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+export function formatCompact(n: number): string {
+  return n < 10_000 ? formatNumber(n) : COMPACT.format(n);
+}
+
+/**
+ * Readable name for a model id: drop the vendor prefix and the release date,
+ * keep everything else exactly as the session file spelled it.
+ * e.g. "claude-sonnet-5-20260219" → "Sonnet-5"
+ */
+export function modelLabel(id: string): string {
+  const name = id.replace(/^claude-/, "").replace(/-\d{8}$/, "");
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}

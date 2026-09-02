@@ -2,11 +2,11 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition, Position, image::Image
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::{SystemTime, Duration, Instant};
-use chrono::DateTime;
+use chrono::{DateTime, Local, NaiveDate};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -29,6 +29,21 @@ pub struct UsageData {
     pub plan: Option<String>,
     /// True when the API refresh is failing and these are the last good numbers.
     pub api_stale: bool,
+    /// Seconds since the API last answered, so a paused sync can say how old
+    /// its numbers are. `None` until one call has succeeded this run.
+    pub api_age_secs: Option<u64>,
+    /// Tokens per model over the same rolling 24h the chart covers, biggest first.
+    pub models: Vec<ModelUsage>,
+}
+
+/// One model's share of the rolling 24h, in tokens. There is no per-model
+/// *limit* anywhere — the API meters the plan, not the model — so this is
+/// counted, never rendered as a percentage of anything but the 24h total.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    pub model: String,
+    pub credits: u64,
 }
 
 #[derive(Clone, Default)]
@@ -49,6 +64,11 @@ impl ApiSnapshot {
 
 /// (fetched_at, last known good snapshot, last fetch succeeded)
 static API_CACHE: std::sync::Mutex<Option<(Instant, ApiSnapshot, bool)>> = std::sync::Mutex::new(None);
+
+/// When the API last actually answered — not when it was last *asked*. The cache
+/// timestamp above moves on every attempt, including the failed ones, so it
+/// cannot say how stale a paused sync's numbers are.
+static LAST_API_OK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
 const API_TTL: Duration = Duration::from_secs(120);
 
@@ -102,7 +122,7 @@ async fn fetch_api_usage(base_dir: &std::path::Path) -> Option<ApiSnapshot> {
 
 #[tauri::command]
 async fn get_claude_usage() -> Result<UsageData, String> {
-    let (total_credits, history, base_dir, plan): (u64, Vec<f64>, Option<std::path::PathBuf>, Option<String>) = tokio::task::spawn_blocking(|| {
+    let (total_credits, history, models, base_dir, plan): (u64, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>) = tokio::task::spawn_blocking(|| {
         let mut total_credits = 0u64;
         let base_dir = dirs::home_dir().map(|h| h.join(".claude"));
 
@@ -129,6 +149,7 @@ async fn get_claude_usage() -> Result<UsageData, String> {
         let twenty_four_hours = Duration::from_secs(24 * 3600);
         let mut seen_uuids = HashSet::new();
         let mut history = vec![0f64; 24]; // rolling hourly buckets, index 23 = this hour
+        let mut model_credits: HashMap<String, f64> = HashMap::new();
 
         if let Ok(entries) = std::fs::read_dir(projects_dir) {
             let now = SystemTime::now();
@@ -195,13 +216,28 @@ async fn get_claude_usage() -> Result<UsageData, String> {
                             if hours_ago < 24 {
                                 history[23 - hours_ago] += msg_credits;
                             }
+                            // Only assistant messages name a model; user turns
+                            // carry usage counters but no `message.model`.
+                            if let Some(model) = json
+                                .get("message")
+                                .and_then(|m| m.get("model"))
+                                .and_then(|m| m.as_str())
+                            {
+                                *model_credits.entry(model.to_string()).or_insert(0.0) += msg_credits;
+                            }
                         }
                     }
                 }
             }
         }
 
-        Ok((total_credits, history, base_dir, plan))
+        let mut models: Vec<ModelUsage> = model_credits
+            .into_iter()
+            .map(|(model, credits)| ModelUsage { model, credits: credits as u64 })
+            .collect();
+        models.sort_by(|a, b| b.credits.cmp(&a.credits));
+
+        Ok((total_credits, history, models, base_dir, plan))
     }).await.unwrap_or_else(|_| Err("Failed to execute blocking task".to_string()))?;
 
     // Start from whatever the API last told us. A failed refresh must never drop
@@ -221,6 +257,9 @@ async fn get_claude_usage() -> Result<UsageData, String> {
                 Some(fresh) => {
                     snapshot = fresh;
                     stale = false;
+                    if let Ok(mut ok) = LAST_API_OK.lock() {
+                        *ok = Some(Instant::now());
+                    }
                 }
                 // Keep the last good numbers; just flag them as stale.
                 None => stale = snapshot.has_data(),
@@ -249,7 +288,134 @@ async fn get_claude_usage() -> Result<UsageData, String> {
         weekly_opus_reset_at: snapshot.opus_reset,
         plan,
         api_stale: stale,
+        api_age_secs: LAST_API_OK
+            .lock()
+            .ok()
+            .and_then(|ok| *ok)
+            .map(|at| at.elapsed().as_secs()),
+        models,
     })
+}
+
+/// One local calendar day's tokens. Days with no usage are still listed, at
+/// zero — a gap in the chart is a fact about that day, not missing data.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DayUsage {
+    /// Local date, ISO `YYYY-MM-DD`.
+    pub date: String,
+    pub credits: u64,
+}
+
+static HISTORY_CACHE: std::sync::Mutex<Option<(Instant, Vec<DayUsage>)>> = std::sync::Mutex::new(None);
+
+const HISTORY_TTL: Duration = Duration::from_secs(300);
+const HISTORY_DAYS: i64 = 7;
+
+/// Tokens per day for the last week, from the local session files.
+///
+/// Deliberately not part of `get_claude_usage`: that one runs every 30s and
+/// skips any file untouched for 24h, which is what keeps the poll off long-dead
+/// session archives. This walks those archives, so it runs when the History tab
+/// asks for it and its answer is cached for a few minutes.
+#[tauri::command]
+async fn get_usage_history() -> Result<Vec<DayUsage>, String> {
+    if let Some((fetched, days)) = HISTORY_CACHE.lock().ok().and_then(|c| c.clone()) {
+        if fetched.elapsed() < HISTORY_TTL {
+            return Ok(days);
+        }
+    }
+
+    let days: Vec<DayUsage> = tokio::task::spawn_blocking(|| {
+        let projects_dir = dirs::home_dir()
+            .map(|h| h.join(".claude").join("projects"))
+            .ok_or_else(|| "Could not find config directory".to_string())?;
+        if !projects_dir.exists() {
+            return Err("Claude projects directory not found".to_string());
+        }
+
+        let today = Local::now().date_naive();
+        let start = today - chrono::Duration::days(HISTORY_DAYS - 1);
+        // A file last written before the window opened cannot hold a message
+        // inside it. The extra day is slack for clock skew and time zones.
+        let cutoff = Duration::from_secs((HISTORY_DAYS as u64 + 1) * 86_400);
+        let now = SystemTime::now();
+
+        let mut totals: HashMap<NaiveDate, f64> = HashMap::new();
+        let mut seen_uuids = HashSet::new();
+
+        if let Ok(entries) = std::fs::read_dir(projects_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Ok(session_files) = std::fs::read_dir(&path) else { continue };
+                for session_entry in session_files.filter_map(|e| e.ok()) {
+                    let session_path = session_entry.path();
+                    if session_path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                        continue;
+                    }
+                    let too_old = session_entry
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|m| now.duration_since(m).ok())
+                        .map(|age| age > cutoff)
+                        .unwrap_or(false);
+                    if too_old {
+                        continue;
+                    }
+                    let Ok(file) = File::open(&session_path) else { continue };
+                    for line in BufReader::new(file).lines().filter_map(|l| l.ok()) {
+                        let Ok(json) = serde_json::from_str::<Value>(&line) else { continue };
+
+                        if let Some(uuid) = json.get("uuid").and_then(|u| u.as_str()) {
+                            if !seen_uuids.insert(uuid.to_string()) {
+                                continue;
+                            }
+                        }
+
+                        let Some(usage) = json.get("message").and_then(|m| m.get("usage")) else { continue };
+                        let msg_credits = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+                            .iter()
+                            .filter_map(|field| usage.get(field).and_then(|v| v.as_f64()))
+                            .sum::<f64>();
+                        if msg_credits <= 0.0 {
+                            continue;
+                        }
+
+                        let Some(ts_str) = json.get("timestamp").and_then(|t| t.as_str()) else { continue };
+                        let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) else { continue };
+                        // The user reads these as their own days, so the bucket
+                        // is the local date, not the UTC one the file records.
+                        let day = dt.with_timezone(&Local).date_naive();
+                        if day < start || day > today {
+                            continue;
+                        }
+                        *totals.entry(day).or_insert(0.0) += msg_credits;
+                    }
+                }
+            }
+        }
+
+        Ok((0..HISTORY_DAYS)
+            .map(|offset| {
+                let day = start + chrono::Duration::days(offset);
+                DayUsage {
+                    date: day.format("%Y-%m-%d").to_string(),
+                    credits: totals.get(&day).copied().unwrap_or(0.0) as u64,
+                }
+            })
+            .collect())
+    })
+    .await
+    .unwrap_or_else(|_| Err("Failed to execute blocking task".to_string()))?;
+
+    if let Ok(mut cache) = HISTORY_CACHE.lock() {
+        *cache = Some((Instant::now(), days.clone()));
+    }
+    Ok(days)
 }
 
 #[tauri::command]
@@ -404,7 +570,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .invoke_handler(tauri::generate_handler![close_hover_panel, close_click_panel, set_tray_state, get_claude_usage, exit_app])
+        .invoke_handler(tauri::generate_handler![close_hover_panel, close_click_panel, set_tray_state, get_claude_usage, get_usage_history, exit_app])
         .setup(|app| {
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(Image::from_bytes(TRAY_NORMAL_ICON)?)

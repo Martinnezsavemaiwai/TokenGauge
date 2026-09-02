@@ -1,4 +1,4 @@
-import type { Provider, UsageSnapshot } from "../types/provider";
+import type { DayUsage, Provider, UsageSnapshot } from "../types/provider";
 
 /**
  * MockProvider — returns controllable UsageSnapshot data for UI development.
@@ -24,6 +24,19 @@ export class MockProvider implements Provider {
     this.percent = Math.max(0, Math.min(100, value));
   }
 
+  async getHistory(): Promise<DayUsage[]> {
+    const today = new Date();
+    return Array.from({ length: 7 }, (_, offset) => {
+      const day = new Date(today);
+      day.setDate(today.getDate() - (6 - offset));
+      const wave = Math.sin(offset) * 0.5 + 0.5;
+      return {
+        date: day.toISOString().slice(0, 10),
+        credits: Math.round(wave * this.percent * 24_000),
+      };
+    });
+  }
+
   async getUsage(): Promise<UsageSnapshot> {
     const now = new Date();
     const resetAt = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000 + 14 * 60 * 60 * 1000);
@@ -38,6 +51,7 @@ export class MockProvider implements Provider {
 
     const snapshot: UsageSnapshot = {
       usedPercent: this.percent,
+      used: Math.round(this.percent * 13_000),
       remainingPercent: 100 - this.percent,
       resetAt,
       currentModel: "Claude Sonnet",
@@ -47,6 +61,11 @@ export class MockProvider implements Provider {
         { kind: "session", percent: this.percent, resetAt: new Date(now.getTime() + 32 * 60 * 1000) },
         { kind: "weekly", percent: Math.min(100, this.percent * 0.8), resetAt },
         { kind: "weekly_opus", percent: Math.min(100, this.percent * 0.45), resetAt },
+      ],
+      models: [
+        { model: "claude-opus-5-20260401", credits: Math.round(this.percent * 9_400) },
+        { model: "claude-sonnet-5-20260219", credits: Math.round(this.percent * 3_100) },
+        { model: "claude-haiku-4-5-20251001", credits: Math.round(this.percent * 480) },
       ],
       source: "mock",
       updatedAt: now,

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Provider, UsageLimit, UsageSnapshot } from "../types/provider";
+import type { DayUsage, ModelUsage, Provider, UsageLimit, UsageSnapshot } from "../types/provider";
 
 interface RawUsage {
   usedPercent: number;
@@ -14,6 +14,8 @@ interface RawUsage {
   weeklyOpusResetAt: string | null;
   plan: string | null;
   apiStale: boolean;
+  apiAgeSecs: number | null;
+  models: ModelUsage[];
 }
 
 function limit(
@@ -30,6 +32,11 @@ export class ClaudeProvider implements Provider {
   name = "Claude";
   icon = "claude";
 
+  /** Walks the session archives, so it is only called when the History tab asks. */
+  async getHistory(): Promise<DayUsage[]> {
+    return invoke<DayUsage[]>("get_usage_history");
+  }
+
   async getUsage(): Promise<UsageSnapshot> {
     try {
       const data = await invoke<RawUsage>("get_claude_usage");
@@ -45,11 +52,13 @@ export class ClaudeProvider implements Provider {
         remainingPercent: data.remainingPercent,
         used: data.used,
         history: data.history,
+        models: data.models,
         apiUsedPercent: data.apiUsedPercent ?? undefined,
         resetAt: data.apiResetAt ? new Date(data.apiResetAt) : undefined,
         plan: data.plan ?? undefined,
         limits,
         stale: data.apiStale,
+        syncAgeSec: data.apiAgeSecs ?? undefined,
         source: data.apiUsedPercent !== null && data.apiUsedPercent !== undefined ? "hybrid" : "local-file",
         updatedAt: new Date(),
         currentModel: "Claude Code",
