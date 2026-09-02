@@ -43,7 +43,7 @@ function App() {
 
   // The API windows only move every few minutes and the local scan walks every
   // active session file — polling every 3s bought nothing but I/O.
-  const { snapshot, state, lastRefresh, refresh } = useUsage(provider, 30_000, view === "click");
+  const { snapshot, state, refresh } = useUsage(provider, 30_000, view === "click");
 
   useIntegration(snapshot, state, view === "dev" ? "Mock" : entry.name);
   useAutoResize(view !== "dev");
@@ -51,7 +51,7 @@ function App() {
   if (view === "hover") {
     const displaySnapshot = snapshot || { usedPercent: 0, remainingPercent: 100 };
     return state !== "loading" ? (
-      <HoverPanel snapshot={displaySnapshot} state={state} lastRefresh={lastRefresh} onRefresh={refresh} />
+      <HoverPanel snapshot={displaySnapshot} state={state} />
     ) : null;
   }
 
@@ -59,10 +59,9 @@ function App() {
     const displaySnapshot = snapshot || { usedPercent: 0, remainingPercent: 100 };
     return state !== "loading" ? (
       <ClickPanel
+        provider={provider}
         snapshot={displaySnapshot}
         state={state}
-        lastRefresh={lastRefresh}
-        onRefresh={refresh}
         onClose={() => invoke("close_click_panel").catch(console.error)}
       />
     ) : null;
@@ -152,15 +151,12 @@ function App() {
             key="hover"
             snapshot={snapshot || { usedPercent: 0, remainingPercent: 100 }}
             state={state}
-            lastRefresh={lastRefresh}
-            onRefresh={refresh}
           />
           <ClickPanel
             key="click"
+            provider={provider}
             snapshot={snapshot || { usedPercent: 0, remainingPercent: 100 }}
             state={state}
-            lastRefresh={lastRefresh}
-            onRefresh={refresh}
             onClose={() => setView("hover")}
           />
         </AnimatePresence>

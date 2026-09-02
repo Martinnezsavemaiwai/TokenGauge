@@ -4,28 +4,26 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { motion, AnimatePresence } from "framer-motion";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { UsageSnapshot, UsageState } from "../types/provider";
+import type { Provider, UsageSnapshot, UsageState } from "../types/provider";
 import { ProgressRing } from "./ProgressRing";
 import { UsageStats } from "./UsageStats";
 import { UsageChart } from "./UsageChart";
-import { RefreshIndicator } from "./RefreshIndicator";
 import { SettingsPanel } from "./SettingsPanel";
 import { LimitBars, PlanBadge } from "./LimitBars";
 import { BrandMark } from "./BrandMark";
 import { ProviderSelector } from "./ProviderSelector";
 import { TabBar, type TabId } from "./TabBar";
-import { EmptyState, ChartGlyph, StackGlyph } from "./EmptyState";
+import { ModelBreakdown } from "./ModelBreakdown";
+import { HistoryPanel } from "./HistoryPanel";
 import { checkForUpdate } from "../lib/updates";
 import { useSettings } from "../hooks/useSettings";
-import { providerEntry } from "../providers/registry";
 import { isLive } from "../lib/usage-state";
 import { t } from "../lib/i18n";
 
 interface ClickPanelProps {
+  provider: Provider;
   snapshot: UsageSnapshot;
   state: UsageState;
-  lastRefresh: Date | null;
-  onRefresh: () => void;
   onClose: () => void;
 }
 
@@ -35,15 +33,13 @@ interface ClickPanelProps {
  * at, and every tab below shows that provider's readings.
  */
 export function ClickPanel({
+  provider: dataProvider,
   snapshot,
   state,
-  lastRefresh,
-  onRefresh,
   onClose,
 }: ClickPanelProps) {
   const { theme, language, providerId, setTheme, setLanguage, setProviderId } = useSettings();
   const [tab, setTab] = useState<TabId>("overview");
-  const provider = providerEntry(providerId);
   const live = isLive(snapshot);
   // The ring is the session window; a "Session 5h" bar under it would just
   // print the same number a second time.
@@ -174,37 +170,12 @@ export function ClickPanel({
                   endHour={snapshot.updatedAt?.getHours()}
                   language={language}
                 />
-
-                <div className="flex items-center justify-between gap-3 mt-auto">
-                  <RefreshIndicator lastRefresh={lastRefresh} onRefresh={onRefresh} language={language} />
-                  <button
-                    onClick={() => openUrl("https://console.anthropic.com/settings/limits")}
-                    className="shrink-0 text-xs font-semibold px-4 py-2 rounded-md cursor-pointer transition-colors"
-                    style={{ background: "var(--color-accent)", color: "var(--color-bg-base)" }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--color-accent-hover)")}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--color-accent)")}
-                  >
-                    {t(language, "openProvider").replace("{provider}", provider.name)}
-                  </button>
-                </div>
               </>
             )}
 
-            {tab === "models" && (
-              <EmptyState
-                icon={<StackGlyph />}
-                title={t(language, "emptyModelsTitle")}
-                note={t(language, "emptyModelsNote")}
-              />
-            )}
+            {tab === "models" && <ModelBreakdown models={snapshot.models ?? []} language={language} />}
 
-            {tab === "history" && (
-              <EmptyState
-                icon={<ChartGlyph />}
-                title={t(language, "emptyHistoryTitle")}
-                note={t(language, "emptyHistoryNote")}
-              />
-            )}
+            {tab === "history" && <HistoryPanel provider={dataProvider} language={language} />}
 
             {tab === "settings" && (
               <SettingsPanel
