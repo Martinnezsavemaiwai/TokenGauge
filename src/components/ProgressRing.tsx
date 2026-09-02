@@ -44,7 +44,12 @@ export function ProgressRing({
         viewBox={`0 0 ${size} ${size}`}
         className="transform -rotate-90"
         role="img"
-        aria-label={`Usage progress: ${Math.round(filled)}%`}
+        // The name has to agree with the face: at "—" it must not read "0%".
+        aria-label={
+          unknown
+            ? t(language, state === "error" ? "error" : "noData")
+            : `${Math.round(filled)}% ${t(language, "used")}`
+        }
       >
         {/* Track */}
         <circle
@@ -67,7 +72,7 @@ export function ProgressRing({
           strokeDasharray={circumference}
           initial={{ strokeDashoffset: circumference }}
           animate={{ strokeDashoffset: offset }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         />
       </svg>
 

@@ -12,11 +12,11 @@ interface UsageChartProps {
   language?: Language;
 }
 
-function formatHour(hour: number): string {
-  if (hour === 0) return "12 AM";
-  if (hour < 12) return `${hour} AM`;
-  if (hour === 12) return "12 PM";
-  return `${hour - 12} PM`;
+/** The clock the reader actually uses: 12-hour with AM/PM in English, 24-hour in Thai. */
+function formatHour(hour: number, language: Language): string {
+  const at = new Date();
+  at.setHours(hour, 0, 0, 0);
+  return at.toLocaleTimeString(language === "th" ? "th-TH" : "en-US", { hour: "numeric" });
 }
 
 function smoothPath(points: [number, number][]): string {
@@ -81,8 +81,8 @@ export function UsageChart({ state, history, endHour, language = "en" }: UsageCh
         role="img"
         aria-label={
           hasActivity
-            ? `Usage trend from ${formatHour(hourAt(startIndex))} to ${formatHour(hourAt(endIndex))}`
-            : "No usage recorded in the last 24 hours"
+            ? `${t(language, "todaysUsage")} · ${formatHour(hourAt(startIndex), language)} – ${formatHour(hourAt(endIndex), language)}`
+            : t(language, "noUsageToday")
         }
       >
         {isNoAccess || !hasActivity ? (
@@ -108,8 +108,8 @@ export function UsageChart({ state, history, endHour, language = "en" }: UsageCh
 
       {hasActivity && (
         <div className="flex justify-between text-[0.6875rem]" style={{ color: "var(--color-text-muted)" }}>
-          <span>{formatHour(hourAt(startIndex))}</span>
-          <span>{formatHour(hourAt(endIndex))}</span>
+          <span>{formatHour(hourAt(startIndex), language)}</span>
+          <span>{formatHour(hourAt(endIndex), language)}</span>
         </div>
       )}
     </div>
