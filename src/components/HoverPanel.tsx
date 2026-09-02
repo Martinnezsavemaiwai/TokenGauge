@@ -5,7 +5,6 @@ import { listen } from "@tauri-apps/api/event";
 import type { UsageSnapshot, UsageState } from "../types/provider";
 import { ProgressRing } from "./ProgressRing";
 import { UsageStats } from "./UsageStats";
-import { RefreshIndicator } from "./RefreshIndicator";
 import { LimitBars, PlanBadge } from "./LimitBars";
 import { Dot } from "./ProviderSelector";
 import { useSettings } from "../hooks/useSettings";
@@ -15,8 +14,6 @@ import { isLive } from "../lib/usage-state";
 interface HoverPanelProps {
   snapshot: UsageSnapshot;
   state: UsageState;
-  lastRefresh: Date | null;
-  onRefresh: () => void;
 }
 
 /**
@@ -24,12 +21,7 @@ interface HoverPanelProps {
  * answers "how much is left" in one arc and one clock. Five facts, no more:
  * anything else belongs in the dashboard.
  */
-export function HoverPanel({
-  snapshot,
-  state,
-  lastRefresh,
-  onRefresh,
-}: HoverPanelProps) {
+export function HoverPanel({ snapshot, state }: HoverPanelProps) {
   const isHovering = useRef(false);
   const { language, providerId } = useSettings();
   const provider = providerEntry(providerId);
@@ -94,8 +86,6 @@ export function HoverPanel({
         </div>
 
         <LimitBars limits={otherLimits} language={language} />
-
-        <RefreshIndicator lastRefresh={lastRefresh} onRefresh={onRefresh} language={language} />
       </div>
     </motion.div>
   );

@@ -8,7 +8,6 @@ interface UseUsageResult {
   state: UsageState;
   error: string | null;
   refresh: () => void;
-  lastRefresh: Date | null;
 }
 
 /**
@@ -27,7 +26,6 @@ export function useUsage(
   const [snapshot, setSnapshot] = useState<UsageSnapshot | null>(null);
   const [state, setState] = useState<UsageState>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -36,7 +34,6 @@ export function useUsage(
       setSnapshot(usage);
       setState(deriveUsageState(usage.usedPercent));
       setError(null);
-      setLastRefresh(new Date());
     } catch (err) {
       if (err instanceof Error && err.name === "FileNotFoundError") {
         setState("no_access");
@@ -71,5 +68,5 @@ export function useUsage(
     };
   }, [refresh, pauseWhenHidden]);
 
-  return { snapshot, state, error, refresh, lastRefresh };
+  return { snapshot, state, error, refresh };
 }
