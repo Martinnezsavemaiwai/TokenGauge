@@ -566,10 +566,17 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
+        // Debug builds are console-subsystem (see main.rs) and load the Vite
+        // dev server, so an autostart entry written by `tauri dev` points
+        // Windows at a binary that opens a blank terminal and renders nothing
+        // once the dev server is gone — and it silently replaces the installed
+        // app's entry, because both register under the same "TokenGauge" name.
+        // Only a release build gets to own the startup registration.
+        // `LaunchAgent` is already the builder's macOS default, and the setter
+        // for it is macOS-only — this is a Windows app, so it is left alone.
+        .plugin(tauri_plugin_autostart::Builder::new()
+            .app_name(if cfg!(debug_assertions) { "TokenGauge (dev)" } else { "TokenGauge" })
+            .build())
         .invoke_handler(tauri::generate_handler![close_hover_panel, close_click_panel, set_tray_state, get_claude_usage, get_usage_history, exit_app])
         .setup(|app| {
             let _tray = TrayIconBuilder::with_id("main")
@@ -577,8 +584,11 @@ pub fn run() {
                 .tooltip("TokenGauge")
                 .on_tray_icon_event(|tray, event| {
                     let app = tray.app_handle();
-                    let hover = app.get_webview_window("hover").unwrap();
-                    let click = app.get_webview_window("click").unwrap();
+                    // `exit_app` closes both windows and only then exits, and the
+                    // tray icon outlives them — a hover landing in that gap used
+                    // to unwrap a `None` and panic on the way out.
+                    let Some(hover) = app.get_webview_window("hover") else { return };
+                    let Some(click) = app.get_webview_window("click") else { return };
                     
                     match event {
                         TrayIconEvent::Enter { rect, .. } => {
