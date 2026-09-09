@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1] - 2026-09-10
+### Fixed
+- Usage notifications repeated every 30 seconds while the reading barely moved. Each announcement is keyed to the window it belongs to, identified by that window's reset timestamp — but the API reports `resets_at` as *now plus whatever is left*, so the value drifts by the round-trip on every response (`02:59:59.735` one poll, `03:00:00.400` the next). Comparing those strings made every poll look like a fresh window, which re-armed every threshold and fired the same notification again. Two reset clocks within a minute of each other now count as the same window; a real rollover moves by hours and still re-arms.
+- TokenGauge opened an empty console window at sign-in and then sat there doing nothing. `tauri dev` and the installed app both registered under the same `TokenGauge` name in `HKCU\...\CurrentVersion\Run`, so running the dev build once replaced the startup entry with a path into `target\debug`. That binary is console-subsystem by design (see `main.rs`) and loads the Vite dev server, so at boot Windows drew a terminal for it and the webviews had nothing to render. Debug builds now register under their own name and can no longer displace the installed entry.
+- The transparent flyouts kept swallowing clicks around the panel drawn inside them. `useAutoResize` shrinks each window down to its content for exactly this reason, but `core:window:allow-set-size` was never granted in the capability file — `core:default` does not include it — so every resize was rejected by Tauri's ACL, silently, since the rejection only ever reached a `.catch`. A test now checks every `getCurrentWindow()` call in the source against the granted permissions.
+- Quitting could panic on the way out. `exit_app` closes both windows and only then exits, while the tray icon outlives them, so a pointer crossing the tray in that gap unwrapped a `None`. The handler returns instead.
+
 ## [0.3.0] - 2026-09-02
 ### Added
 - Time to limit: the usage panel projects the session window forward from the tokens burned in the last hour and says how long is left at that pace. The line appears only when that pace runs out before the window resets, and turns amber under an hour.
