@@ -93,6 +93,27 @@ export interface ThresholdMark {
 }
 
 /**
+ * Whether two reset timestamps name the same window period.
+ *
+ * The API reports `resets_at` as "now + whatever is left", so the value drifts
+ * by the round-trip on every response — 02:59:59.735 one poll, 03:00:00.400 the
+ * next. Comparing the raw strings made every poll look like a fresh window,
+ * which re-armed every threshold and fired the same notification on a loop.
+ * A minute of tolerance absorbs that drift; a real rollover moves the clock by
+ * hours, so it still reads as a new window.
+ */
+const WINDOW_TOLERANCE_MS = 60_000;
+
+function sameWindow(a: string | undefined, b: string): boolean {
+  if (a === undefined) return false;
+  if (a === b) return true;
+  const at = Date.parse(a);
+  const bt = Date.parse(b);
+  if (Number.isNaN(at) || Number.isNaN(bt)) return false;
+  return Math.abs(at - bt) < WINDOW_TOLERANCE_MS;
+}
+
+/**
  * The threshold `percent` newly crosses, or `null` when nothing new was reached.
  *
  * Announcements are keyed to the *window period*, not to process lifetime: a
@@ -104,7 +125,7 @@ export function crossedThreshold(
   previous: ThresholdMark | undefined,
   window: string,
 ): number | null {
-  const carried = previous?.window === window ? previous.mark : 0;
+  const carried = sameWindow(previous?.window, window) ? previous!.mark : 0;
   // Re-arm on a reading that dropped: covers providers that report no reset clock.
   const mark = percent < carried - 5 ? 0 : carried;
   const crossed = NOTIFY_THRESHOLDS.find((threshold) => percent >= threshold) ?? 0;

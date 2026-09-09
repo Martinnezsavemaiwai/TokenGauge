@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { crossedThreshold, deriveUsageState, isLive, peakPercent, planLabel } from "./usage-state";
+import { crossedThreshold, deriveUsageState, isLive, peakPercent, planLabel, type ThresholdMark } from "./usage-state";
 import type { UsageLimit } from "../types/provider";
 
 describe("deriveUsageState", () => {
@@ -86,5 +86,39 @@ describe("crossedThreshold", () => {
   it("re-arms when the reading drops and there is no reset clock", () => {
     expect(crossedThreshold(61, { window: "", mark: 100 }, "")).toBe(60);
     expect(crossedThreshold(97, { window: "", mark: 100 }, "")).toBeNull();
+  });
+});
+
+describe("crossedThreshold — drifting reset clocks", () => {
+  // The API computes `resets_at` as "now + time left in the window", so the
+  // timestamp drifts by the round-trip on every single response. Keying the
+  // announcement off the raw string re-armed every threshold every poll.
+  it("announces once across a reset time that drifts between polls", () => {
+    const polls = [
+      "2026-09-10T02:59:59.735319+00:00",
+      "2026-09-10T03:00:00.400816+00:00",
+      "2026-09-10T03:00:31.118204+00:00",
+    ];
+    let mark: ThresholdMark | undefined;
+    const fired: number[] = [];
+    for (const window of polls) {
+      const crossed = crossedThreshold(93, mark, window);
+      if (crossed !== null) {
+        mark = { window, mark: crossed };
+        fired.push(crossed);
+      }
+    }
+    expect(fired).toEqual([90]);
+  });
+
+  it("still re-arms when the window genuinely rolls over", () => {
+    const first = crossedThreshold(93, undefined, "2026-09-10T03:00:00.000000+00:00");
+    expect(first).toBe(90);
+    const next = crossedThreshold(
+      62,
+      { window: "2026-09-10T03:00:00.000000+00:00", mark: 90 },
+      "2026-09-17T03:00:00.000000+00:00",
+    );
+    expect(next).toBe(60);
   });
 });
