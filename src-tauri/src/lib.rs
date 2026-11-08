@@ -38,6 +38,9 @@ pub struct UsageData {
     pub models: Vec<ModelUsage>,
     /// Stable id of the signed-in account, so per-account state stays separate.
     pub account_id: Option<String>,
+    /// The last 5 hours may hold another account's tokens, since session files
+    /// are not separated by account. The percentage only ever covers this one.
+    pub accounts_mixed: bool,
 }
 
 /// One model's share of the rolling 24h, in tokens. There is no per-model
@@ -80,6 +83,12 @@ const API_TTL: Duration = Duration::from_secs(120);
 /// by rewriting its files, so without this a switch kept showing the previous
 /// account's percentage, indefinitely if the first call as the new one failed.
 static API_ACCOUNT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// When TokenGauge last saw the account change.
+///
+/// ponytail: in memory, so a switch made while the app was closed goes unseen.
+/// Session files cannot fill the gap: most record no owner at all.
+static ACCOUNT_SWITCHED_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
 fn read_account_id(claude_json: &str) -> Option<String> {
     serde_json::from_str::<Value>(claude_json)
@@ -322,6 +331,9 @@ async fn get_claude_usage() -> Result<UsageData, String> {
                 if let Ok(mut ok) = LAST_API_OK.lock() {
                     *ok = None;
                 }
+                if let Ok(mut at) = ACCOUNT_SWITCHED_AT.lock() {
+                    *at = Some(Instant::now());
+                }
             }
             if account.is_some() {
                 *known = account;
@@ -385,6 +397,11 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             .and_then(|ok| *ok)
             .map(|at| at.elapsed().as_secs()),
         account_id,
+        accounts_mixed: ACCOUNT_SWITCHED_AT
+            .lock()
+            .ok()
+            .and_then(|at| *at)
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(5 * 3600)),
         models,
     })
 }

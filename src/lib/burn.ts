@@ -7,8 +7,9 @@ import type { UsageSnapshot } from "../types/provider";
  * - `safe`  — burning, but the window resets first.
  * - `idle`  — nothing spent in the last hour or so; no pace to project.
  *
- * `null` means the reading cannot be made honestly: no live session window, or
- * nothing local to measure the pace against.
+ * `null` means the reading cannot be made honestly: no live session window,
+ * nothing local to measure the pace against, or local tokens that may belong
+ * to another account.
  */
 export type Burn =
   | { kind: "idle" }
@@ -36,6 +37,7 @@ export function burnRate(snapshot: UsageSnapshot, now = new Date()): Burn | null
   const history = snapshot.history;
   const used = snapshot.sessionUsed ?? snapshot.used;
 
+  if (snapshot.mixedAccounts) return null;
   if (!session || !history || history.length < 2) return null;
   if (!used || used <= 0 || session.percent <= 0) return null;
 

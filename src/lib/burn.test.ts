@@ -50,6 +50,10 @@ describe("burnRate", () => {
     expect(burnRate(snapshot({ used: 0 }), NOW)).toBeNull();
   });
 
+  it("refuses to guess while recent tokens may be another account's", () => {
+    expect(burnRate(snapshot({ mixedAccounts: true }), NOW)).toBeNull();
+  });
+
   it("says nothing once the limit is already spent", () => {
     expect(burnRate(snapshot({ limits: [{ kind: "session", percent: 100 }] }), NOW)).toBeNull();
   });

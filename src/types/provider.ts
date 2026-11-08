@@ -35,6 +35,8 @@ export interface UsageSnapshot {
   resetAt?: Date;
   currentModel?: string;
   account?: string;
+  /** Recent local tokens may include another account's, so they cannot be set against the percentage */
+  mixedAccounts?: boolean;
 
   /** Subscription tier, e.g. "pro" / "max" */
   plan?: string;
