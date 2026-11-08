@@ -83,6 +83,10 @@ describe("crossedThreshold", () => {
     expect(crossedThreshold(62, { window: week, mark: 100 }, next)).toBe(60);
   });
 
+  it("does not re-announce a dip inside a window that has a reset clock", () => {
+    expect(crossedThreshold(84, { window: week, mark: 90 }, week)).toBeNull();
+  });
+
   it("re-arms when the reading drops and there is no reset clock", () => {
     expect(crossedThreshold(61, { window: "", mark: 100 }, "")).toBe(60);
     expect(crossedThreshold(97, { window: "", mark: 100 }, "")).toBeNull();

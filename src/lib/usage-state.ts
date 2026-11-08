@@ -135,8 +135,9 @@ export function crossedThreshold(
   window: string,
 ): number | null {
   const carried = sameWindow(previous?.window, window) ? previous!.mark : 0;
-  // Re-arm on a reading that dropped: covers providers that report no reset clock.
-  const mark = percent < carried - 5 ? 0 : carried;
+  // Re-arm on a reading that dropped, only for providers with no reset clock.
+  // With a clock, the window says when to re-arm, and a dip is not a new crossing.
+  const mark = window === "" && percent < carried - 5 ? 0 : carried;
   const crossed = NOTIFY_THRESHOLDS.find((threshold) => percent >= threshold) ?? 0;
   return crossed > mark ? crossed : null;
 }
