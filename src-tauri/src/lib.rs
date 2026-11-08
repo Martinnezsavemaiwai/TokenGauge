@@ -38,6 +38,8 @@ pub struct UsageData {
     pub models: Vec<ModelUsage>,
     /// Stable id of the signed-in account, so per-account state stays separate.
     pub account_id: Option<String>,
+    /// Who that account is, for the dashboard header.
+    pub account_label: Option<String>,
     /// The last 5 hours may hold another account's tokens, since session files
     /// are not separated by account. The percentage only ever covers this one.
     pub accounts_mixed: bool,
@@ -102,7 +104,15 @@ const API_TTL: Duration = Duration::from_secs(120);
 /// The account the cached numbers above belong to. Claude Code swaps accounts
 /// by rewriting its files, so without this a switch kept showing the previous
 /// account's percentage, indefinitely if the first call as the new one failed.
-static API_ACCOUNT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static API_ACCOUNT: std::sync::Mutex<Option<Account>> = std::sync::Mutex::new(None);
+
+/// Who is signed in to Claude Code, from `~/.claude.json`.
+#[derive(Clone, PartialEq)]
+struct Account {
+    id: String,
+    /// Display name, or the email address when there is none.
+    label: Option<String>,
+}
 
 /// When TokenGauge last saw the account change.
 ///
@@ -110,13 +120,20 @@ static API_ACCOUNT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(Non
 /// Session files cannot fill the gap: most record no owner at all.
 static ACCOUNT_SWITCHED_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
-fn read_account_id(claude_json: &str) -> Option<String> {
-    serde_json::from_str::<Value>(claude_json)
-        .ok()?
-        .get("oauthAccount")?
-        .get("accountUuid")?
-        .as_str()
-        .map(str::to_string)
+fn read_account(claude_json: &str) -> Option<Account> {
+    let json = serde_json::from_str::<Value>(claude_json).ok()?;
+    let account = json.get("oauthAccount")?;
+    let text = |key: &str| {
+        account
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+    };
+    Some(Account {
+        id: text("accountUuid")?,
+        label: text("displayName").or_else(|| text("emailAddress")),
+    })
 }
 
 /// `None` means the file could not be read on this poll, not that the account
@@ -268,7 +285,7 @@ fn scan_sessions(projects_dir: &std::path::Path, newer_than: SystemTime, mut on_
 
 #[tauri::command]
 async fn get_claude_usage() -> Result<UsageData, String> {
-    let (total_credits, recent, history, models, base_dir, plan, account): (u64, Vec<(i64, f64)>, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>, Option<String>) = tokio::task::spawn_blocking(|| {
+    let (total_credits, recent, history, models, base_dir, plan, account): (u64, Vec<(i64, f64)>, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>, Option<Account>) = tokio::task::spawn_blocking(|| {
         let mut total_credits = 0u64;
         let base_dir = dirs::home_dir().map(|h| h.join(".claude"));
 
@@ -285,7 +302,7 @@ async fn get_claude_usage() -> Result<UsageData, String> {
 
         let account = dirs::home_dir()
             .and_then(|h| std::fs::read_to_string(h.join(".claude.json")).ok())
-            .and_then(|c| read_account_id(&c));
+            .and_then(|c| read_account(&c));
 
         let projects_dir = base_dir.clone()
             .map(|p| p.join("projects"))
@@ -342,9 +359,10 @@ async fn get_claude_usage() -> Result<UsageData, String> {
     // healthy "35% — Live API Sync" into "100% used / negative remaining (Local only)".
     // Report the last id we could read, so one failed read cannot look like a
     // different account to whatever is keyed on it.
-    let account_id = match API_ACCOUNT.lock() {
+    let current_account = match API_ACCOUNT.lock() {
         Ok(mut known) => {
-            if account_changed(known.as_deref(), account.as_deref()) {
+            let known_id = known.as_ref().map(|a| a.id.as_str());
+            if account_changed(known_id, account.as_ref().map(|a| a.id.as_str())) {
                 if let Ok(mut cache) = API_CACHE.lock() {
                     *cache = None;
                 }
@@ -387,7 +405,7 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             None => stale = snapshot.has_data(),
         }
         // A poll that overlapped a switch must not refill the cache for the old account.
-        let same_account = API_ACCOUNT.lock().map(|known| *known == account_id).unwrap_or(true);
+        let same_account = API_ACCOUNT.lock().map(|known| *known == current_account).unwrap_or(true);
         if same_account {
             if let Ok(mut cache) = API_CACHE.lock() {
                 *cache = Some((Instant::now(), snapshot.clone(), !stale));
@@ -422,7 +440,8 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             .ok()
             .and_then(|ok| *ok)
             .map(|at| at.elapsed().as_secs()),
-        account_id,
+        account_id: current_account.as_ref().map(|a| a.id.clone()),
+        account_label: current_account.and_then(|a| a.label),
         accounts_mixed: ACCOUNT_SWITCHED_AT
             .lock()
             .ok()
@@ -553,6 +572,13 @@ fn set_tray_state(app: tauri::AppHandle, state: String) {
     }
 }
 
+#[tauri::command]
+fn set_tray_tooltip(app: tauri::AppHandle, text: String) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(text));
+    }
+}
+
 /// Last known tray icon rect in physical pixels (x, y, width).
 static TRAY_ANCHOR: std::sync::Mutex<Option<(i32, i32, i32)>> = std::sync::Mutex::new(None);
 
@@ -666,7 +692,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new()
             .app_name(if cfg!(debug_assertions) { "TokenGauge (dev)" } else { "TokenGauge" })
             .build())
-        .invoke_handler(tauri::generate_handler![close_hover_panel, close_click_panel, set_tray_state, get_claude_usage, get_usage_history, exit_app])
+        .invoke_handler(tauri::generate_handler![close_hover_panel, close_click_panel, set_tray_state, set_tray_tooltip, get_claude_usage, get_usage_history, exit_app])
         .setup(|app| {
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(Image::from_bytes(TRAY_NORMAL_ICON)?)
@@ -728,7 +754,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{account_changed, clock_bucket, flyout_position, read_account_id, scan_sessions, tokens_in_session, ApiSnapshot};
+    use super::{account_changed, clock_bucket, flyout_position, read_account, scan_sessions, tokens_in_session, ApiSnapshot};
 
     #[test]
     fn a_window_past_its_reset_is_forgotten_and_a_live_one_kept() {
@@ -797,10 +823,13 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_account_id_and_tolerates_anything_else() {
-        assert_eq!(read_account_id(r#"{"oauthAccount":{"accountUuid":"u1"}}"#).as_deref(), Some("u1"));
-        assert_eq!(read_account_id(r#"{"oauthAccount":null}"#), None);
-        assert_eq!(read_account_id("{half a wri"), None);
+    fn reads_the_account_and_tolerates_anything_else() {
+        let named = read_account(r#"{"oauthAccount":{"accountUuid":"u1","displayName":"Mai","emailAddress":"m@x.co"}}"#).unwrap();
+        assert_eq!((named.id.as_str(), named.label.as_deref()), ("u1", Some("Mai")));
+        let unnamed = read_account(r#"{"oauthAccount":{"accountUuid":"u2","displayName":" ","emailAddress":"m@x.co"}}"#).unwrap();
+        assert_eq!(unnamed.label.as_deref(), Some("m@x.co"));
+        assert!(read_account(r#"{"oauthAccount":null}"#).is_none());
+        assert!(read_account("{half a wri").is_none());
     }
 
     /// 1920x1080 primary at 100%, 48px taskbar — the monitor the tray lives on.

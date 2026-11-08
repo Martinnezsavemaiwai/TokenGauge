@@ -18,6 +18,7 @@ interface RawUsage {
   apiAgeSecs: number | null;
   models: ModelUsage[];
   accountId: string | null;
+  accountLabel: string | null;
   accountsMixed: boolean;
 }
 
@@ -64,17 +65,16 @@ export class ClaudeProvider implements Provider {
         sessionUsed: data.sessionUsed ?? undefined,
         history: data.history,
         models: data.models,
-        apiUsedPercent: data.apiUsedPercent ?? undefined,
         resetAt: toDate(data.apiResetAt),
         plan: data.plan ?? undefined,
         account: data.accountId ?? undefined,
+        accountLabel: data.accountLabel ?? undefined,
         mixedAccounts: data.accountsMixed,
         limits,
         stale: data.apiStale,
         syncAgeSec: data.apiAgeSecs ?? undefined,
         source: data.apiUsedPercent !== null && data.apiUsedPercent !== undefined ? "hybrid" : "local-file",
         updatedAt: new Date(),
-        currentModel: "Claude Code",
       };
     } catch (e: any) {
       if (typeof e === "string" && e.includes("directory not found")) {

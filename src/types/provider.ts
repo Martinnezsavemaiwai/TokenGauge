@@ -29,12 +29,10 @@ export interface UsageSnapshot {
   used?: number;
   /** Tokens since the current session window opened */
   sessionUsed?: number;
-  /** Usage quota/limit — only if the data source provides it */
-  limit?: number;
-
   resetAt?: Date;
-  currentModel?: string;
   account?: string;
+  /** Who that account is, for display */
+  accountLabel?: string;
   /** Recent local tokens may include another account's, so they cannot be set against the percentage */
   mixedAccounts?: boolean;
 
@@ -55,7 +53,6 @@ export interface UsageSnapshot {
   history?: number[]; // 24 hourly buckets
   /** Per-model tokens over those same 24 hours, biggest first */
   models?: ModelUsage[];
-  apiUsedPercent?: number;
 }
 
 export type UsageState =
