@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::{SystemTime, Duration, Instant};
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -142,6 +142,84 @@ async fn fetch_api_usage(base_dir: &std::path::Path) -> Option<ApiSnapshot> {
     if snapshot.has_data() { Some(snapshot) } else { None }
 }
 
+/// One API call's token usage, as recorded in a session file.
+struct TokenEvent {
+    at: DateTime<FixedOffset>,
+    tokens: f64,
+    model: Option<String>,
+}
+
+/// Every session file under `dir` written since `newer_than`. Recursive because
+/// subagent transcripts live in `<session>/subagents/`, a level below the session.
+fn session_files(dir: &std::path::Path, newer_than: SystemTime, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let Ok(kind) = entry.file_type() else { continue };
+        let path = entry.path();
+        if kind.is_dir() {
+            session_files(&path, newer_than, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            let fresh = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|modified| modified >= newer_than)
+                .unwrap_or(true);
+            if fresh {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// Parse one line, or `None` if it carries no usage or repeats one already seen.
+///
+/// Claude Code writes a line per content block and repeats the same `usage` on
+/// each, every line with its own `uuid`. Deduping on `uuid` counted one API call
+/// up to 21 times, so the key is the API message itself.
+fn parse_usage_line(line: &[u8], seen: &mut HashSet<String>) -> Option<TokenEvent> {
+    let json = serde_json::from_slice::<Value>(line).ok()?;
+    let message = json.get("message")?;
+    let usage = message.get("usage")?;
+    let tokens = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+        .iter()
+        .filter_map(|field| usage.get(field).and_then(|v| v.as_f64()))
+        .sum::<f64>();
+    if tokens <= 0.0 {
+        return None;
+    }
+    let at = DateTime::parse_from_rfc3339(json.get("timestamp")?.as_str()?).ok()?;
+
+    let text = |value: Option<&Value>| value.and_then(|v| v.as_str()).map(str::to_string);
+    let key = match text(message.get("id")) {
+        Some(id) => Some(format!("{id}:{}", text(json.get("requestId")).unwrap_or_default())),
+        None => text(json.get("uuid")),
+    };
+    if let Some(key) = key {
+        if !seen.insert(key) {
+            return None;
+        }
+    }
+
+    // Only assistant messages name a model.
+    Some(TokenEvent { at, tokens, model: text(message.get("model")) })
+}
+
+fn scan_sessions(projects_dir: &std::path::Path, newer_than: SystemTime, mut on_event: impl FnMut(TokenEvent)) {
+    let mut files = Vec::new();
+    session_files(projects_dir, newer_than, &mut files);
+    let mut seen = HashSet::new();
+    for path in files {
+        let Ok(file) = File::open(&path) else { continue };
+        // Raw bytes, not `lines()`: one bad line is skipped by the parser, and
+        // `map_while` stops at a read error that would otherwise repeat forever.
+        for line in BufReader::new(file).split(b'\n').map_while(Result::ok) {
+            if let Some(event) = parse_usage_line(&line, &mut seen) {
+                on_event(event);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 async fn get_claude_usage() -> Result<UsageData, String> {
     let (total_credits, history, models, base_dir, plan, account): (u64, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>, Option<String>) = tokio::task::spawn_blocking(|| {
@@ -173,89 +251,34 @@ async fn get_claude_usage() -> Result<UsageData, String> {
 
         let five_hours = Duration::from_secs(5 * 3600);
         let twenty_four_hours = Duration::from_secs(24 * 3600);
-        let mut seen_uuids = HashSet::new();
         let mut history = vec![0f64; 24]; // rolling hourly buckets, index 23 = this hour
         let mut model_credits: HashMap<String, f64> = HashMap::new();
+        let now = SystemTime::now();
 
-        if let Ok(entries) = std::fs::read_dir(projects_dir) {
-            let now = SystemTime::now();
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
+        // A file untouched for 24h holds nothing this scan looks at — skipping
+        // it keeps the poll off long-dead session archives.
+        scan_sessions(&projects_dir, now - twenty_four_hours, |event| {
+            let Ok(duration) = now.duration_since(SystemTime::from(event.at)) else { return };
+            if duration <= five_hours {
+                total_credits += event.tokens as u64;
+            }
+
+            // Rolling 24h, oldest first: index 23 is the hour we are in.
+            // The limits being watched are rolling too, so a midnight
+            // reset would blank the chart against nothing real. The
+            // frontend turns the index into a clock hour using
+            // `updatedAt` — labelling the index itself as an hour is
+            // what pinned the axis to "11 PM" forever.
+            if duration <= twenty_four_hours {
+                let hours_ago = (duration.as_secs() / 3600) as usize;
+                if hours_ago < 24 {
+                    history[23 - hours_ago] += event.tokens;
                 }
-                let Ok(session_files) = std::fs::read_dir(&path) else { continue };
-                for session_entry in session_files.filter_map(|e| e.ok()) {
-                    let session_path = session_entry.path();
-                    if session_path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                        continue;
-                    }
-                    // A file untouched for 24h holds nothing this scan looks at —
-                    // skipping it keeps the poll off long-dead session archives.
-                    let untouched = session_entry
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|m| now.duration_since(m).ok())
-                        .map(|age| age > twenty_four_hours)
-                        .unwrap_or(false);
-                    if untouched {
-                        continue;
-                    }
-                    let Ok(file) = File::open(&session_path) else { continue };
-                    let reader = BufReader::new(file);
-                    for line in reader.lines().filter_map(|l| l.ok()) {
-                        let Ok(json) = serde_json::from_str::<Value>(&line) else { continue };
-
-                        if let Some(uuid) = json.get("uuid").and_then(|u| u.as_str()) {
-                            if !seen_uuids.insert(uuid.to_string()) {
-                                continue;
-                            }
-                        }
-
-                        let Some(usage) = json.get("message").and_then(|m| m.get("usage")) else { continue };
-                        let msg_credits = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
-                            .iter()
-                            .filter_map(|field| usage.get(field).and_then(|v| v.as_f64()))
-                            .sum::<f64>();
-                        if msg_credits <= 0.0 {
-                            continue;
-                        }
-
-                        let Some(ts_str) = json.get("timestamp").and_then(|t| t.as_str()) else { continue };
-                        let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) else { continue };
-                        let msg_time = SystemTime::from(dt);
-
-                        let Ok(duration) = now.duration_since(msg_time) else { continue };
-                        if duration <= five_hours {
-                            total_credits += msg_credits as u64;
-                        }
-
-                        // Rolling 24h, oldest first: index 23 is the hour we are in.
-                        // The limits being watched are rolling too, so a midnight
-                        // reset would blank the chart against nothing real. The
-                        // frontend turns the index into a clock hour using
-                        // `updatedAt` — labelling the index itself as an hour is
-                        // what pinned the axis to "11 PM" forever.
-                        if duration <= twenty_four_hours {
-                            let hours_ago = (duration.as_secs() / 3600) as usize;
-                            if hours_ago < 24 {
-                                history[23 - hours_ago] += msg_credits;
-                            }
-                            // Only assistant messages name a model; user turns
-                            // carry usage counters but no `message.model`.
-                            if let Some(model) = json
-                                .get("message")
-                                .and_then(|m| m.get("model"))
-                                .and_then(|m| m.as_str())
-                            {
-                                *model_credits.entry(model.to_string()).or_insert(0.0) += msg_credits;
-                            }
-                        }
-                    }
+                if let Some(model) = event.model {
+                    *model_credits.entry(model).or_insert(0.0) += event.tokens;
                 }
             }
-        }
+        });
 
         let mut models: Vec<ModelUsage> = model_credits
             .into_iter()
@@ -389,62 +412,14 @@ async fn get_usage_history() -> Result<Vec<DayUsage>, String> {
         let now = SystemTime::now();
 
         let mut totals: HashMap<NaiveDate, f64> = HashMap::new();
-        let mut seen_uuids = HashSet::new();
-
-        if let Ok(entries) = std::fs::read_dir(projects_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let Ok(session_files) = std::fs::read_dir(&path) else { continue };
-                for session_entry in session_files.filter_map(|e| e.ok()) {
-                    let session_path = session_entry.path();
-                    if session_path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                        continue;
-                    }
-                    let too_old = session_entry
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|m| now.duration_since(m).ok())
-                        .map(|age| age > cutoff)
-                        .unwrap_or(false);
-                    if too_old {
-                        continue;
-                    }
-                    let Ok(file) = File::open(&session_path) else { continue };
-                    for line in BufReader::new(file).lines().filter_map(|l| l.ok()) {
-                        let Ok(json) = serde_json::from_str::<Value>(&line) else { continue };
-
-                        if let Some(uuid) = json.get("uuid").and_then(|u| u.as_str()) {
-                            if !seen_uuids.insert(uuid.to_string()) {
-                                continue;
-                            }
-                        }
-
-                        let Some(usage) = json.get("message").and_then(|m| m.get("usage")) else { continue };
-                        let msg_credits = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
-                            .iter()
-                            .filter_map(|field| usage.get(field).and_then(|v| v.as_f64()))
-                            .sum::<f64>();
-                        if msg_credits <= 0.0 {
-                            continue;
-                        }
-
-                        let Some(ts_str) = json.get("timestamp").and_then(|t| t.as_str()) else { continue };
-                        let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) else { continue };
-                        // The user reads these as their own days, so the bucket
-                        // is the local date, not the UTC one the file records.
-                        let day = dt.with_timezone(&Local).date_naive();
-                        if day < start || day > today {
-                            continue;
-                        }
-                        *totals.entry(day).or_insert(0.0) += msg_credits;
-                    }
-                }
+        scan_sessions(&projects_dir, now - cutoff, |event| {
+            // The user reads these as their own days, so the bucket
+            // is the local date, not the UTC one the file records.
+            let day = event.at.with_timezone(&Local).date_naive();
+            if day >= start && day <= today {
+                *totals.entry(day).or_insert(0.0) += event.tokens;
             }
-        }
+        });
 
         Ok((0..HISTORY_DAYS)
             .map(|offset| {
@@ -686,7 +661,26 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{account_changed, flyout_position, read_account_id};
+    use super::{account_changed, flyout_position, read_account_id, scan_sessions};
+
+    #[test]
+    fn counts_each_api_message_once_including_subagent_files() {
+        let root = std::env::temp_dir().join(format!("tokengauge-scan-{}", std::process::id()));
+        let nested = root.join("proj").join("sess").join("subagents");
+        std::fs::create_dir_all(&nested).unwrap();
+        let line = |uuid: &str, id: &str| {
+            format!(r#"{{"uuid":"{uuid}","requestId":"r-{id}","timestamp":"2026-11-08T10:00:00Z","message":{{"id":"{id}","usage":{{"input_tokens":100,"output_tokens":5}}}}}}"#)
+        };
+        let session = format!("{}\n{}\nnot json\n{}\n", line("u1", "m1"), line("u2", "m1"), line("u3", "m2"));
+        std::fs::write(root.join("proj").join("sess.jsonl"), session).unwrap();
+        std::fs::write(nested.join("agent.jsonl"), line("u4", "m3")).unwrap();
+
+        let mut total = 0.0;
+        scan_sessions(&root, std::time::SystemTime::UNIX_EPOCH, |event| total += event.tokens);
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(total, 315.0, "m1 twice, m2 once, the subagent's m3 once");
+    }
 
     #[test]
     fn only_two_different_known_accounts_count_as_a_switch() {
