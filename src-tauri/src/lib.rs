@@ -34,6 +34,8 @@ pub struct UsageData {
     pub api_age_secs: Option<u64>,
     /// Tokens per model over the same rolling 24h the chart covers, biggest first.
     pub models: Vec<ModelUsage>,
+    /// Stable id of the signed-in account, so per-account state stays separate.
+    pub account_id: Option<String>,
 }
 
 /// One model's share of the rolling 24h, in tokens. There is no per-model
@@ -71,6 +73,26 @@ static API_CACHE: std::sync::Mutex<Option<(Instant, ApiSnapshot, bool)>> = std::
 static LAST_API_OK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
 const API_TTL: Duration = Duration::from_secs(120);
+
+/// The account the cached numbers above belong to. Claude Code swaps accounts
+/// by rewriting its files, so without this a switch kept showing the previous
+/// account's percentage, indefinitely if the first call as the new one failed.
+static API_ACCOUNT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn read_account_id(claude_json: &str) -> Option<String> {
+    serde_json::from_str::<Value>(claude_json)
+        .ok()?
+        .get("oauthAccount")?
+        .get("accountUuid")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// `None` means the file could not be read on this poll, not that the account
+/// went away, so it never counts as a change.
+fn account_changed(known: Option<&str>, current: Option<&str>) -> bool {
+    matches!((known, current), (Some(a), Some(b)) if a != b)
+}
 
 fn read_window(root: &Value, key: &str) -> (Option<f64>, Option<String>) {
     let window = root.get(key);
@@ -122,7 +144,7 @@ async fn fetch_api_usage(base_dir: &std::path::Path) -> Option<ApiSnapshot> {
 
 #[tauri::command]
 async fn get_claude_usage() -> Result<UsageData, String> {
-    let (total_credits, history, models, base_dir, plan): (u64, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>) = tokio::task::spawn_blocking(|| {
+    let (total_credits, history, models, base_dir, plan, account): (u64, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>, Option<String>) = tokio::task::spawn_blocking(|| {
         let mut total_credits = 0u64;
         let base_dir = dirs::home_dir().map(|h| h.join(".claude"));
 
@@ -136,6 +158,10 @@ async fn get_claude_usage() -> Result<UsageData, String> {
                     .and_then(|s| s.as_str())
                     .map(|s| s.to_string())
             });
+
+        let account = dirs::home_dir()
+            .and_then(|h| std::fs::read_to_string(h.join(".claude.json")).ok())
+            .and_then(|c| read_account_id(&c));
 
         let projects_dir = base_dir.clone()
             .map(|p| p.join("projects"))
@@ -237,12 +263,32 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             .collect();
         models.sort_by(|a, b| b.credits.cmp(&a.credits));
 
-        Ok((total_credits, history, models, base_dir, plan))
+        Ok((total_credits, history, models, base_dir, plan, account))
     }).await.unwrap_or_else(|_| Err("Failed to execute blocking task".to_string()))?;
 
     // Start from whatever the API last told us. A failed refresh must never drop
     // us back onto the local token estimate — that fallback is what turned a
     // healthy "35% — Live API Sync" into "100% used / negative remaining (Local only)".
+    // Report the last id we could read, so one failed read cannot look like a
+    // different account to whatever is keyed on it.
+    let account_id = match API_ACCOUNT.lock() {
+        Ok(mut known) => {
+            if account_changed(known.as_deref(), account.as_deref()) {
+                if let Ok(mut cache) = API_CACHE.lock() {
+                    *cache = None;
+                }
+                if let Ok(mut ok) = LAST_API_OK.lock() {
+                    *ok = None;
+                }
+            }
+            if account.is_some() {
+                *known = account;
+            }
+            known.clone()
+        }
+        Err(_) => account,
+    };
+
     let cached = API_CACHE.lock().ok().and_then(|c| c.clone());
     let mut snapshot = cached.as_ref().map(|(_, s, _)| s.clone()).unwrap_or_default();
     let mut stale = cached.as_ref().map(|(_, _, ok)| !ok).unwrap_or(false);
@@ -293,6 +339,7 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             .ok()
             .and_then(|ok| *ok)
             .map(|at| at.elapsed().as_secs()),
+        account_id,
         models,
     })
 }
@@ -639,7 +686,22 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::flyout_position;
+    use super::{account_changed, flyout_position, read_account_id};
+
+    #[test]
+    fn only_two_different_known_accounts_count_as_a_switch() {
+        assert!(account_changed(Some("a"), Some("b")));
+        assert!(!account_changed(Some("a"), Some("a")));
+        assert!(!account_changed(Some("a"), None), "a failed read is not a switch");
+        assert!(!account_changed(None, Some("a")), "the first read is not a switch");
+    }
+
+    #[test]
+    fn reads_the_account_id_and_tolerates_anything_else() {
+        assert_eq!(read_account_id(r#"{"oauthAccount":{"accountUuid":"u1"}}"#).as_deref(), Some("u1"));
+        assert_eq!(read_account_id(r#"{"oauthAccount":null}"#), None);
+        assert_eq!(read_account_id("{half a wri"), None);
+    }
 
     /// 1920x1080 primary at 100%, 48px taskbar — the monitor the tray lives on.
     const PRIMARY: Option<(i32, i32, u32, u32)> = Some((0, 0, 1920, 1032));

@@ -16,6 +16,7 @@ interface RawUsage {
   apiStale: boolean;
   apiAgeSecs: number | null;
   models: ModelUsage[];
+  accountId: string | null;
 }
 
 function limit(
@@ -56,6 +57,7 @@ export class ClaudeProvider implements Provider {
         apiUsedPercent: data.apiUsedPercent ?? undefined,
         resetAt: data.apiResetAt ? new Date(data.apiResetAt) : undefined,
         plan: data.plan ?? undefined,
+        account: data.accountId ?? undefined,
         limits,
         stale: data.apiStale,
         syncAgeSec: data.apiAgeSecs ?? undefined,
