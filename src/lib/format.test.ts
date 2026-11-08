@@ -11,6 +11,12 @@ describe("formatTimeUntil", () => {
     expect(formatTimeUntil(target)).toBe("5d 14h");
   });
 
+  it("speaks Thai when asked", () => {
+    const target = new Date(Date.now() + (5 * 24 + 14) * 3600_000 + 30_000);
+    expect(formatTimeUntil(target, "th")).toBe("5 วัน 14 ชม.");
+    expect(formatTimeUntil(new Date(Date.now() - 1000), "th")).toBe("ตอนนี้");
+  });
+
   it("formats sub-minute as < 1m", () => {
     const target = new Date(Date.now() + 30_000);
     expect(formatTimeUntil(target)).toBe("< 1m");

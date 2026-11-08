@@ -1,14 +1,23 @@
+import type { Language } from "../hooks/useSettings";
+
 /**
  * Format a duration from now until a target date as a compact string.
- * e.g. "5d 14h", "2h 30m", "< 1m"
+ * e.g. "5d 14h", "2h 30m", "< 1m"; in Thai "5 วัน 14 ชม."
  */
-export function formatTimeUntil(target: Date): string {
+export function formatTimeUntil(target: Date, language: Language = "en"): string {
   const ms = target.getTime() - Date.now();
-  if (ms <= 0) return "now";
+  if (ms <= 0) return language === "th" ? "ตอนนี้" : "now";
 
   const minutes = Math.floor(ms / 60_000);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
+
+  if (language === "th") {
+    if (days > 0) return `${days} วัน ${hours % 24} ชม.`;
+    if (hours > 0) return `${hours} ชม. ${minutes % 60} นาที`;
+    if (minutes > 0) return `${minutes} นาที`;
+    return "< 1 นาที";
+  }
 
   if (days > 0) return `${days}d ${hours % 24}h`;
   if (hours > 0) return `${hours}h ${minutes % 60}m`;
