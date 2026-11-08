@@ -27,6 +27,8 @@ export interface UsageSnapshot {
 
   /** Absolute usage count — only if the data source provides it */
   used?: number;
+  /** Tokens since the current session window opened */
+  sessionUsed?: number;
   /** Usage quota/limit — only if the data source provides it */
   limit?: number;
 

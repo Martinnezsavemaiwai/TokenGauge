@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::{SystemTime, Duration, Instant};
-use chrono::{DateTime, FixedOffset, Local, NaiveDate};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, Timelike};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -16,6 +16,8 @@ pub struct UsageData {
     pub used_percent: f64,
     pub remaining_percent: f64,
     pub used: u64,
+    /// Tokens since the current session window opened. `None` without a reset clock.
+    pub session_used: Option<u64>,
     pub history: Vec<f64>,
     pub api_used_percent: Option<f64>,
     pub api_reset_at: Option<String>,
@@ -171,6 +173,21 @@ fn session_files(dir: &std::path::Path, newer_than: SystemTime, out: &mut Vec<st
     }
 }
 
+/// Which of the 24 hourly buckets a message falls in, by local clock hour.
+fn clock_bucket(now_secs: i64, secs_into_hour: i64, msg_secs: i64) -> Option<usize> {
+    let before_this_hour = now_secs - secs_into_hour - msg_secs;
+    let hours_ago = if before_this_hour <= 0 { 0 } else { (before_this_hour + 3599) / 3600 };
+    (hours_ago < 24).then(|| 23 - hours_ago as usize)
+}
+
+/// Tokens spent since the 5-hour window ending at `reset` opened. `recent` is
+/// (unix seconds, tokens). The window opens at its first message, so the rolling
+/// 5 hours also holds the previous window's tokens, which understated the pace.
+fn tokens_in_session(recent: &[(i64, f64)], reset: &str) -> Option<u64> {
+    let opened = DateTime::parse_from_rfc3339(reset).ok()?.timestamp() - 5 * 3600;
+    Some(recent.iter().filter(|(at, _)| *at >= opened).map(|(_, tokens)| tokens).sum::<f64>() as u64)
+}
+
 /// Parse one line, or `None` if it carries no usage or repeats one already seen.
 ///
 /// Claude Code writes a line per content block and repeats the same `usage` on
@@ -222,7 +239,7 @@ fn scan_sessions(projects_dir: &std::path::Path, newer_than: SystemTime, mut on_
 
 #[tauri::command]
 async fn get_claude_usage() -> Result<UsageData, String> {
-    let (total_credits, history, models, base_dir, plan, account): (u64, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>, Option<String>) = tokio::task::spawn_blocking(|| {
+    let (total_credits, recent, history, models, base_dir, plan, account): (u64, Vec<(i64, f64)>, Vec<f64>, Vec<ModelUsage>, Option<std::path::PathBuf>, Option<String>, Option<String>) = tokio::task::spawn_blocking(|| {
         let mut total_credits = 0u64;
         let base_dir = dirs::home_dir().map(|h| h.join(".claude"));
 
@@ -253,7 +270,10 @@ async fn get_claude_usage() -> Result<UsageData, String> {
         let twenty_four_hours = Duration::from_secs(24 * 3600);
         let mut history = vec![0f64; 24]; // rolling hourly buckets, index 23 = this hour
         let mut model_credits: HashMap<String, f64> = HashMap::new();
+        let mut recent = Vec::new();
         let now = SystemTime::now();
+        let local_now: DateTime<Local> = now.into();
+        let secs_into_hour = (local_now.minute() * 60 + local_now.second()) as i64;
 
         // A file untouched for 24h holds nothing this scan looks at — skipping
         // it keeps the poll off long-dead session archives.
@@ -261,18 +281,17 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             let Ok(duration) = now.duration_since(SystemTime::from(event.at)) else { return };
             if duration <= five_hours {
                 total_credits += event.tokens as u64;
+                recent.push((event.at.timestamp(), event.tokens));
             }
 
-            // Rolling 24h, oldest first: index 23 is the hour we are in.
-            // The limits being watched are rolling too, so a midnight
-            // reset would blank the chart against nothing real. The
-            // frontend turns the index into a clock hour using
-            // `updatedAt` — labelling the index itself as an hour is
-            // what pinned the axis to "11 PM" forever.
+            // Local clock hours, oldest first, index 23 being the hour in
+            // progress. The burn rate divides by the minutes elapsed in it and
+            // the chart labels it with `updatedAt`'s hour, so buckets counted
+            // back from `now` overstated the pace by up to double. They roll
+            // rather than reset at midnight because the limits roll too.
             if duration <= twenty_four_hours {
-                let hours_ago = (duration.as_secs() / 3600) as usize;
-                if hours_ago < 24 {
-                    history[23 - hours_ago] += event.tokens;
+                if let Some(index) = clock_bucket(local_now.timestamp(), secs_into_hour, event.at.timestamp()) {
+                    history[index] += event.tokens;
                 }
                 if let Some(model) = event.model {
                     *model_credits.entry(model).or_insert(0.0) += event.tokens;
@@ -286,7 +305,7 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             .collect();
         models.sort_by(|a, b| b.credits.cmp(&a.credits));
 
-        Ok((total_credits, history, models, base_dir, plan, account))
+        Ok((total_credits, recent, history, models, base_dir, plan, account))
     }).await.unwrap_or_else(|_| Err("Failed to execute blocking task".to_string()))?;
 
     // Start from whatever the API last told us. A failed refresh must never drop
@@ -344,7 +363,10 @@ async fn get_claude_usage() -> Result<UsageData, String> {
     // still reported in `used`; a percentage is only ever the measured one.
     let used_percent = snapshot.session.unwrap_or(0.0);
 
+    let session_used = snapshot.session_reset.as_deref().and_then(|reset| tokens_in_session(&recent, reset));
+
     Ok(UsageData {
+        session_used,
         used_percent,
         remaining_percent: (100.0 - used_percent).max(0.0),
         used: total_credits,
@@ -661,7 +683,30 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{account_changed, flyout_position, read_account_id, scan_sessions};
+    use super::{account_changed, clock_bucket, flyout_position, read_account_id, scan_sessions, tokens_in_session};
+
+    #[test]
+    fn buckets_follow_the_clock_hour_not_the_distance_from_now() {
+        // 12:05:00, so 300s into the hour.
+        let now = 1_000_000 * 3600 + 300;
+        let at = |minutes_before_noon: i64| 1_000_000 * 3600 - minutes_before_noon * 60;
+        assert_eq!(clock_bucket(now, 300, at(-3)), Some(23), "12:03 is this hour");
+        assert_eq!(clock_bucket(now, 300, at(0)), Some(23), "12:00:00 is this hour");
+        assert_eq!(clock_bucket(now, 300, at(50)), Some(22), "11:10 is the previous hour");
+        assert_eq!(clock_bucket(now, 300, at(60)), Some(22), "11:00:00 is the previous hour");
+        assert_eq!(clock_bucket(now, 300, at(61)), Some(21), "10:59 is the one before");
+        assert_eq!(clock_bucket(now, 300, at(23 * 60)), Some(0));
+        assert_eq!(clock_bucket(now, 300, at(23 * 60 + 1)), None);
+    }
+
+    #[test]
+    fn session_tokens_start_when_the_window_opened() {
+        let reset = "2026-11-08T15:00:00+00:00";
+        let opened = chrono::DateTime::parse_from_rfc3339(reset).unwrap().timestamp() - 5 * 3600;
+        let recent = [(opened - 1, 1000.0), (opened, 20.0), (opened + 60, 5.0)];
+        assert_eq!(tokens_in_session(&recent, reset), Some(25));
+        assert_eq!(tokens_in_session(&recent, "garbage"), None);
+    }
 
     #[test]
     fn counts_each_api_message_once_including_subagent_files() {

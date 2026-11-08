@@ -35,9 +35,9 @@ function smoothPath(points: [number, number][]): string {
  * UsageChart — smoothed sparkline over the rolling 24 hours, cropped to the
  * active stretch so a sparse day doesn't render as mostly dead air.
  *
- * The buckets are positions in a rolling window, not clock hours: bucket 23 is
- * whatever hour it is now. Printing the index as an hour is what used to pin
- * the right edge of the axis to "11 PM" around the clock.
+ * The window rolls: bucket 23 is the clock hour in progress. Printing the index
+ * as an hour is what used to pin the right edge of the axis to "11 PM" around
+ * the clock.
  */
 export function UsageChart({ state, history, endHour, language = "en" }: UsageChartProps) {
   const isNoAccess = state === "no_access" || state === "error";

@@ -23,7 +23,7 @@ const SESSION_HOURS = 5;
  *
  * The API reports percent, the session files report tokens, and nothing reports
  * the plan's token ceiling — so the two are bridged by the window they share:
- * `used` is the tokens spent in the same rolling 5 hours the session percentage
+ * the tokens spent since the session window opened are what the percentage
  * measures, which makes `percent / used` this plan's percent-per-token.
  *
  * ponytail: straight-line projection — it ignores tokens ageing out of the
@@ -34,7 +34,7 @@ const SESSION_HOURS = 5;
 export function burnRate(snapshot: UsageSnapshot, now = new Date()): Burn | null {
   const session = snapshot.limits?.find((limit) => limit.kind === "session");
   const history = snapshot.history;
-  const used = snapshot.used;
+  const used = snapshot.sessionUsed ?? snapshot.used;
 
   if (!session || !history || history.length < 2) return null;
   if (!used || used <= 0 || session.percent <= 0) return null;

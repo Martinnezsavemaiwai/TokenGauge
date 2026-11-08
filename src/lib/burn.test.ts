@@ -29,6 +29,13 @@ describe("burnRate", () => {
     expect(burn.minutesToLimit).toBeCloseTo(90, 0); // 50 remaining at 33.3% per hour
   });
 
+  it("measures against the tokens of the current window when it knows them", () => {
+    // Half the rolling 5 hours belonged to the previous window.
+    const burn = burnRate(snapshot({ used: 24_000, sessionUsed: 12_000 }), NOW);
+    if (burn?.kind !== "eta") throw new Error("expected an eta");
+    expect(burn.percentPerHour).toBeCloseTo(100 / 3, 5);
+  });
+
   it("says safe when the window resets before the limit is reached", () => {
     const burn = burnRate(snapshot({ limits: [{ kind: "session", percent: 50, resetAt: new Date(NOW.getTime() + 60_000) }] }), NOW);
     expect(burn?.kind).toBe("safe");
