@@ -8,6 +8,10 @@ describe("compareVersions", () => {
     ["0.2.0", "0.2.0", 0],
     ["0.10.0", "0.9.9", 1],
     ["1.0", "1.0.0", 0],
+    ["0.3.1-beta.2", "0.3.1", -1],
+    ["0.3.1", "0.3.1-beta.2", 1],
+    ["0.3.1-beta.10", "0.3.1-beta.2", 1],
+    ["0.4.0-beta.1", "0.3.1", 1],
   ] as const)("%s vs %s", (a, b, expected) => {
     expect(Math.sign(compareVersions(a, b))).toBe(expected);
   });

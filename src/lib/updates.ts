@@ -7,15 +7,24 @@ export type UpdateCheckResult =
   | { status: "available"; latestVersion: string }
   | { status: "error" };
 
-/** Compare two dotted versions. Returns >0 when `a` is newer than `b`. */
+/** Compare two versions, ranking a pre-release below its own release. Returns >0 when `a` is newer than `b`. */
 export function compareVersions(a: string, b: string): number {
-  const parts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
-  const [x, y] = [parts(a), parts(b)];
-  for (let i = 0; i < Math.max(x.length, y.length); i++) {
-    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+  const parse = (v: string) => {
+    const dash = v.indexOf("-");
+    return {
+      parts: (dash < 0 ? v : v.slice(0, dash)).split(".").map((n) => parseInt(n, 10) || 0),
+      pre: dash < 0 ? "" : v.slice(dash + 1),
+    };
+  };
+  const [x, y] = [parse(a), parse(b)];
+  for (let i = 0; i < Math.max(x.parts.length, y.parts.length); i++) {
+    const diff = (x.parts[i] ?? 0) - (y.parts[i] ?? 0);
     if (diff !== 0) return diff;
   }
-  return 0;
+  if (x.pre === y.pre) return 0;
+  if (!x.pre) return 1;
+  if (!y.pre) return -1;
+  return x.pre.localeCompare(y.pre, undefined, { numeric: true });
 }
 
 /**
