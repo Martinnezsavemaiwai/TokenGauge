@@ -21,13 +21,20 @@ interface RawUsage {
   accountsMixed: boolean;
 }
 
+/** An unparseable date would throw later, from `toISOString`, and take the window down. */
+function toDate(value: string | null): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
 function limit(
   kind: UsageLimit["kind"],
   percent: number | null,
   resetAt: string | null,
 ): UsageLimit | null {
   if (percent === null || percent === undefined) return null;
-  return { kind, percent, resetAt: resetAt ? new Date(resetAt) : undefined };
+  return { kind, percent, resetAt: toDate(resetAt) };
 }
 
 export class ClaudeProvider implements Provider {
@@ -58,7 +65,7 @@ export class ClaudeProvider implements Provider {
         history: data.history,
         models: data.models,
         apiUsedPercent: data.apiUsedPercent ?? undefined,
-        resetAt: data.apiResetAt ? new Date(data.apiResetAt) : undefined,
+        resetAt: toDate(data.apiResetAt),
         plan: data.plan ?? undefined,
         account: data.accountId ?? undefined,
         mixedAccounts: data.accountsMixed,

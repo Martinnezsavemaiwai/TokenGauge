@@ -67,6 +67,26 @@ impl ApiSnapshot {
     fn has_data(&self) -> bool {
         self.session.is_some() || self.weekly.is_some()
     }
+
+    /// Forget any window whose reset has passed. Its percentage describes a
+    /// period that is over: with sync paused it held the tray red indefinitely.
+    fn without_expired(mut self, now_secs: i64) -> Self {
+        for (percent, reset) in [
+            (&mut self.session, &mut self.session_reset),
+            (&mut self.weekly, &mut self.weekly_reset),
+            (&mut self.opus, &mut self.opus_reset),
+        ] {
+            let passed = reset
+                .as_deref()
+                .and_then(|r| DateTime::parse_from_rfc3339(r).ok())
+                .is_some_and(|r| r.timestamp() <= now_secs);
+            if passed {
+                *percent = None;
+                *reset = None;
+            }
+        }
+        self
+    }
 }
 
 /// (fetched_at, last known good snapshot, last fetch succeeded)
@@ -366,10 +386,16 @@ async fn get_claude_usage() -> Result<UsageData, String> {
             },
             None => stale = snapshot.has_data(),
         }
-        if let Ok(mut cache) = API_CACHE.lock() {
-            *cache = Some((Instant::now(), snapshot.clone(), !stale));
+        // A poll that overlapped a switch must not refill the cache for the old account.
+        let same_account = API_ACCOUNT.lock().map(|known| *known == account_id).unwrap_or(true);
+        if same_account {
+            if let Ok(mut cache) = API_CACHE.lock() {
+                *cache = Some((Instant::now(), snapshot.clone(), !stale));
+            }
         }
     }
+
+    let snapshot = snapshot.without_expired(Local::now().timestamp());
 
     // No API window means no trustworthy denominator. The raw token count is
     // still reported in `used`; a percentage is only ever the measured one.
@@ -430,7 +456,9 @@ const HISTORY_DAYS: i64 = 7;
 #[tauri::command]
 async fn get_usage_history() -> Result<Vec<DayUsage>, String> {
     if let Some((fetched, days)) = HISTORY_CACHE.lock().ok().and_then(|c| c.clone()) {
-        if fetched.elapsed() < HISTORY_TTL {
+        // The last entry is labelled "Today", so a cache from yesterday is stale at midnight.
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        if fetched.elapsed() < HISTORY_TTL && days.last().is_some_and(|day| day.date == today) {
             return Ok(days);
         }
     }
@@ -700,7 +728,23 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{account_changed, clock_bucket, flyout_position, read_account_id, scan_sessions, tokens_in_session};
+    use super::{account_changed, clock_bucket, flyout_position, read_account_id, scan_sessions, tokens_in_session, ApiSnapshot};
+
+    #[test]
+    fn a_window_past_its_reset_is_forgotten_and_a_live_one_kept() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-11-08T12:00:00+00:00").unwrap().timestamp();
+        let snapshot = ApiSnapshot {
+            session: Some(95.0),
+            session_reset: Some("2026-11-08T11:59:00+00:00".into()),
+            weekly: Some(40.0),
+            weekly_reset: Some("2026-11-10T00:00:00+00:00".into()),
+            ..Default::default()
+        }
+        .without_expired(at);
+        assert_eq!(snapshot.session, None);
+        assert_eq!(snapshot.session_reset, None);
+        assert_eq!(snapshot.weekly, Some(40.0));
+    }
 
     #[test]
     fn buckets_follow_the_clock_hour_not_the_distance_from_now() {
