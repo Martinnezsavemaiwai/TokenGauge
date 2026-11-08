@@ -15,14 +15,16 @@ export function useAutoResize(enabled: boolean) {
     const root = document.getElementById("root");
     if (!root) return;
 
-    // The window can never be taller than the screen, so the panel must not be
-    // either: cap `.panel` from the screen (not the window — that would feed
-    // back into its own size) and `.panel-scroll` scrolls the overflow.
-    const maxHeight = Math.round(window.screen.availHeight * 0.9);
-    document.documentElement.style.setProperty("--panel-max-h", `${maxHeight - 16}px`); // #root padding
-
     let applied = "";
     const apply = () => {
+      // The panel must never outgrow the screen it is on, so cap it from the
+      // screen (not the window, which would feed back into its own size) and
+      // re-read it each time: the flyout can be dragged to another monitor.
+      const maxHeight = Math.round(window.screen.availHeight * 0.9);
+      const maxWidth = Math.round(window.screen.availWidth * 0.9);
+      document.documentElement.style.setProperty("--panel-max-h", `${maxHeight - 16}px`); // #root padding
+      document.documentElement.style.setProperty("--panel-max-w", `${maxWidth - 16}px`);
+
       // getBoundingClientRect keeps the fraction offsetWidth rounds away; one
       // pixel of slack, because a window narrower than its panel clips it.
       const rect = root.getBoundingClientRect();

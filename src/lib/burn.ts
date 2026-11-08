@@ -42,7 +42,7 @@ export function burnRate(snapshot: UsageSnapshot, now = new Date()): Burn | null
   if (!used || used <= 0 || session.percent <= 0) return null;
 
   const remaining = 100 - session.percent;
-  if (remaining <= 0) return null; // already spent — the ring says so
+  if (remaining <= 0) return null; // already spent — the character says so
 
   // The newest bucket is the hour in progress, so it covers only the minutes
   // elapsed in it; pairing it with the full hour before keeps a fresh hour from

@@ -1,15 +1,11 @@
 import { useRef, useEffect } from "react";
-import { motion } from "framer-motion";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import type { UsageSnapshot, UsageState } from "../types/provider";
-import { ProgressRing } from "./ProgressRing";
-import { UsageStats } from "./UsageStats";
-import { LimitBars, PlanBadge } from "./LimitBars";
-import { Dot } from "./ProviderSelector";
+import { LeadLimit, LimitChip, NoReading, staleLine } from "./Roster";
 import { useSettings } from "../hooks/useSettings";
-import { providerEntry } from "../providers/registry";
-import { isLive } from "../lib/usage-state";
+import { isLive, rankLimits } from "../lib/usage-state";
+import { t } from "../lib/i18n";
 
 interface HoverPanelProps {
   snapshot: UsageSnapshot;
@@ -17,17 +13,14 @@ interface HoverPanelProps {
 }
 
 /**
- * Quick Glance — the second distance. Names the provider being measured, then
- * answers "how much is left" in one arc and one clock. Five facts, no more:
- * anything else belongs in the dashboard.
+ * Quick Glance. The limit that bites first gets the character, the number and
+ * the clock; the others are a chip each. Everything else lives in the dashboard.
  */
 export function HoverPanel({ snapshot, state }: HoverPanelProps) {
   const isHovering = useRef(false);
-  const { language, providerId } = useSettings();
-  const provider = providerEntry(providerId);
-  const live = isLive(snapshot);
-  // The ring already is the session window.
-  const otherLimits = (snapshot.limits ?? []).filter((limit) => limit.kind !== "session");
+  const { language } = useSettings();
+  const [lead, ...rest] = isLive(snapshot) ? rankLimits(snapshot.limits) : [];
+  const stale = staleLine(snapshot, language);
 
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
@@ -51,42 +44,39 @@ export function HoverPanel({ snapshot, state }: HoverPanelProps) {
   }, []);
 
   return (
-    <motion.div
-      className="panel w-max flex flex-col"
-      style={{ minWidth: "20rem", maxWidth: "26rem", transformOrigin: "bottom center" }}
-      initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.97 }}
-      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+    <div
+      className="panel panel-hover"
       onMouseEnter={() => (isHovering.current = true)}
       onMouseLeave={() => {
         isHovering.current = false;
-        // Also close when mouse leaves the panel itself
         getCurrentWindow().hide().catch(console.error);
       }}
     >
-      <div className="panel-scroll p-4 flex flex-col gap-4">
-        {/* What is being measured */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <Dot color={provider.dot} />
-            <span
-              className="text-xs font-semibold truncate"
-              style={{ color: "var(--color-text-secondary)" }}
-            >
-              {provider.name}
-            </span>
+      <div className="panel-scroll p-3 flex flex-col gap-2">
+        {state === "no_access" ? (
+          <NoReading title={t(language, "errorNoAccessTitle")} note={t(language, "errorNoAccessHint")} language={language} />
+        ) : state === "error" ? (
+          <NoReading title={t(language, "errorTitle")} note={t(language, "errorHint")} language={language} />
+        ) : lead ? (
+          <LeadLimit limit={lead} language={language} />
+        ) : (
+          <NoReading title={t(language, "moodAsleep")} tokens={snapshot.used} language={language} />
+        )}
+
+        {rest.length > 0 && (
+          <div className="chips">
+            {rest.map((limit) => (
+              <LimitChip key={limit.kind} limit={limit} language={language} />
+            ))}
           </div>
-          <PlanBadge plan={snapshot.plan} language={language} />
-        </div>
+        )}
 
-        <div className="flex items-center gap-4">
-          <ProgressRing percent={live ? snapshot.usedPercent : null} state={state} size={88} strokeWidth={6} language={language} />
-          <UsageStats snapshot={snapshot} language={language} />
-        </div>
-
-        <LimitBars limits={otherLimits} language={language} />
+        {lead && stale && (
+          <p className="meta px-1" style={{ color: "var(--danger)" }}>
+            {stale}. {t(language, "syncHint")}
+          </p>
+        )}
       </div>
-    </motion.div>
+    </div>
   );
 }

@@ -28,13 +28,19 @@ export function useUsage(
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // A slower answer from an earlier provider must not overwrite a newer one.
+  const latest = useRef(0);
+
   const refresh = useCallback(async () => {
+    const request = ++latest.current;
     try {
       const usage = await provider.getUsage();
+      if (request !== latest.current) return;
       setSnapshot(usage);
       setState(deriveUsageState(usage.usedPercent));
       setError(null);
     } catch (err) {
+      if (request !== latest.current) return;
       if (err instanceof Error && err.name === "FileNotFoundError") {
         setState("no_access");
         setError("Provider not logged in or no usage data found");
