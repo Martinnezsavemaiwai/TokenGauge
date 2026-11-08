@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.2] - 2026-11-08
+### Fixed
+- Every token figure was more than double the truth. Claude Code writes one line per content block and repeats the same `usage` on each, every line with its own `uuid`, and the scan deduped on that `uuid`. Each API message now counts once, keyed on `message.id` and `requestId`. On real session files this took a week from 3.05B tokens to 1.38B.
+- Subagent transcripts were never counted, because they sit a folder below the session and the scan read one level.
+- Switching accounts showed the previous account's percentage for up to two minutes, and indefinitely if the first call as the new account failed. The API cache is now cleared when the account changes.
+- Switching accounts re-announced thresholds every time. Announced marks are now kept per account.
+- Time to limit read up to twice as fast early in each hour, and the chart could label a message an hour late. The hourly buckets counted back from now while both readers treated them as clock hours. They are clock hours now.
+- Time to limit also divided by the rolling 5 hours, which included the previous window's tokens. It now uses the tokens since the current window opened.
+- With sync paused, a window whose reset had passed kept driving the tray, so it could stay red indefinitely. A window is forgotten once its reset passes.
+- A settings change in the dashboard did not reach the other hooks in that same window, because the `storage` event never fires in the document that wrote the value. Each window now holds one shared copy.
+- A dip inside a window with a reset clock re-armed its thresholds and could announce a lower one.
+- A pre-release tag ranked above its own stable version in the update check.
+- The History tab could call yesterday "Today" for a few minutes after midnight.
+
+### Changed
+- Token counts now say *all accounts*, because session files are not separated by account while the percentage belongs to the signed-in one. Time to limit is withheld for 5 hours after a switch, since the two can no longer be compared.
+
 ## [0.3.1] - 2026-09-10
 ### Fixed
 - Usage notifications repeated every 30 seconds while the reading barely moved. Each announcement is keyed to the window it belongs to, identified by that window's reset timestamp — but the API reports `resets_at` as *now plus whatever is left*, so the value drifts by the round-trip on every response (`02:59:59.735` one poll, `03:00:00.400` the next). Comparing those strings made every poll look like a fresh window, which re-armed every threshold and fired the same notification again. Two reset clocks within a minute of each other now count as the same window; a real rollover moves by hours and still re-arms.

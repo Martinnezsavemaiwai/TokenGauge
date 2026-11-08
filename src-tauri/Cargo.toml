@@ -1,6 +1,6 @@
 [package]
 name = "tokengauge"
-version = "0.3.1"
+version = "0.3.2"
 description = "Windows taskbar companion for AI coding assistant usage"
 authors = ["Martinnezsavemaiwai"]
 edition = "2021"
