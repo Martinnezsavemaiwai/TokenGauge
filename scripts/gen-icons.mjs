@@ -1,12 +1,12 @@
 /**
- * Generates every TokenGauge icon from two parametric sources.
+ * Generates every TokenGauge icon from the session character.
  *
- * They are two different jobs, so they are two different drawings:
- *   - the TRAY MARK is a 16px glyph — open arc, needle, no field;
- *   - the APP TILE is a 256px Windows 11 plate — a dial with ticks and a pivot.
- * Both are the product's own geometry, never a provider's glyph — see DESIGN.md.
- * Keep the tray mark's constants in sync with src/components/BrandMark.tsx,
- * which draws the same shape in the UI.
+ * Two drawings for two jobs:
+ *   - the TRAY MARK has to read at 16px, so it is the bun, a leaf and a face drawn
+ *     with one-pixel strokes. Its colour and its face both change with the state,
+ *     so colour is never the only signal;
+ *   - the APP TILE is the full character on a plum plate.
+ * The tile's paths mirror the session character in src/components/Mascot.tsx.
  *
  * Usage: node scripts/gen-icons.mjs
  * Requires: @tauri-apps/cli (already a dev dependency) — it rasterizes the SVG
@@ -18,58 +18,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SIZE = 512;
-const CENTER = SIZE / 2;
+const INK = "#24162C";
+const STICKER = "#FFFFFF";
+const LEAF = "#6BD6A8";
 
-/* ---- Tray mark: the open gauge, tuned so it survives 16px. ---- */
-const RADIUS = 176;
-const STROKE = 78; // heavier than the in-app mark: this has to read at 16px
-const NEEDLE = 84;
-const NEEDLE_STROKE = 40;
-const HUB = 28;
-const START = 138;
-const SWEEP = 264;
+/** One pixel at 16px is 32 units, so nothing that must survive goes below that. */
+const FACE_STROKE = 38;
+const round = `stroke="${INK}" stroke-width="${FACE_STROKE}" stroke-linecap="round" fill="none"`;
+const eyes = (r) => `<circle cx="172" cy="272" r="${r}" fill="${INK}"/><circle cx="340" cy="272" r="${r}" fill="${INK}"/>`;
 
-/** Track color works on both a light and a dark taskbar. */
-const TRACK = "#7C7C7C";
-const TRACK_OPACITY = 0.55;
-
-/**
- * The failure this geometry exists to fix: a round-capped needle whose tip
- * reaches the arc's inner edge fuses into it, and the mark becomes one blob.
- * One pixel of clearance at 16px is 32 units at this scale.
- */
-const clearance = RADIUS - STROKE / 2 - (NEEDLE + NEEDLE_STROKE / 2);
-if (clearance < 32) {
-  throw new Error(`needle clears the arc by ${clearance} units (<32) — it will fuse at 16px`);
-}
-
-/* ---- App tile: Windows 11 plate with a 180° dial. ---- */
-const TILE_CORNER = 116;
-const DIAL = { cx: 256, cy: 330, radius: 162, stroke: 40, start: 180, sweep: 180 };
-const DIAL_TRACK = "#4A443E";
-const TICK = "#7A7068";
-const TICKS = 5;
+const FACES = {
+  happy: `${eyes(40)}<path d="M190 356Q256 424 322 356" ${round}/>`,
+  worried: `${eyes(40)}<path d="M190 398Q256 338 322 398" ${round}/>`,
+  alarmed: `${eyes(50)}<ellipse cx="256" cy="384" rx="44" ry="50" fill="${INK}"/>`,
+  asleep: `<path d="M126 276H218M294 276H386" ${round}/><path d="M212 376H300" ${round}/>`,
+};
 
 const TRAY_STATES = {
-  icon_normal: { color: "#D4845A", fill: 0.55 },
-  icon_warning: { color: "#E0A63A", fill: 0.78 },
-  icon_critical: { color: "#E05B4A", fill: 0.97 },
-  icon_disabled: { color: "#8A8A8A", fill: 0 },
-};
-
-/** The app tile is static branding, not a reading — it rests where normal does. */
-const APP_TILE = { color: "#D4845A", fill: 0.55 };
-
-const point = (deg, r, cx = CENTER, cy = CENTER) => {
-  const rad = (deg * Math.PI) / 180;
-  return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)].map((n) => n.toFixed(2));
-};
-
-const arc = (fromDeg, toDeg, r, cx = CENTER, cy = CENTER) => {
-  const [x1, y1] = point(fromDeg, r, cx, cy);
-  const [x2, y2] = point(toDeg, r, cx, cy);
-  const large = Math.abs(toDeg - fromDeg) > 180 ? 1 : 0;
-  return `M${x1} ${y1} A${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+  icon_normal: { color: "#F0862E", face: "happy" },
+  icon_warning: { color: "#F4BC3C", face: "worried" },
+  icon_critical: { color: "#E5483D", face: "alarmed" },
+  icon_disabled: { color: "#A59EB3", face: "asleep" },
 };
 
 const wrap = (body) =>
@@ -77,49 +46,24 @@ const wrap = (body) =>
 ${body}
 </svg>`;
 
-function trayMark({ color, fill }) {
-  const end = START + SWEEP * fill;
-  const [nx, ny] = point(end, NEEDLE);
-  const filled = fill > 0
-    ? `  <path d="${arc(START, end, RADIUS)}" stroke="${color}" stroke-width="${STROKE}" stroke-linecap="round"/>`
-    : "";
-
-  return wrap(`  <path d="${arc(START, START + SWEEP, RADIUS)}" stroke="${TRACK}" stroke-opacity="${TRACK_OPACITY}" stroke-width="${STROKE}" stroke-linecap="round"/>
-${filled}
-  <path d="M${CENTER} ${CENTER} L${nx} ${ny}" stroke="${color}" stroke-width="${NEEDLE_STROKE}" stroke-linecap="round"/>
-  <circle cx="${CENTER}" cy="${CENTER}" r="${HUB}" fill="${color}"/>`);
+function trayMark({ color, face }) {
+  return wrap(`  <path d="M268 84C292 26 360 10 424 34C414 106 342 132 268 84Z" fill="${LEAF}" stroke="${STICKER}" stroke-width="24" stroke-linejoin="round" paint-order="stroke"/>
+  <circle cx="256" cy="292" r="208" fill="${color}" stroke="${STICKER}" stroke-width="28" paint-order="stroke"/>
+  ${FACES[face]}`);
 }
 
-function appTile({ color, fill }) {
-  const { cx, cy, radius, stroke, start, sweep } = DIAL;
-  const end = start + sweep * fill;
-
-  let ticks = "";
-  for (let i = 0; i < TICKS; i++) {
-    const deg = start + (sweep / (TICKS - 1)) * i;
-    const [x1, y1] = point(deg, 118, cx, cy);
-    const [x2, y2] = point(deg, 138, cx, cy);
-    ticks += `  <path d="M${x1} ${y1} L${x2} ${y2}" stroke="${TICK}" stroke-width="11" stroke-linecap="round"/>\n`;
-  }
-
-  // A tapered needle: wide at the pivot, a point at the scale.
-  const [tx, ty] = point(end, 128, cx, cy);
-  const [b1x, b1y] = point(end + 90, 14, cx, cy);
-  const [b2x, b2y] = point(end - 90, 14, cx, cy);
-
-  return wrap(`  <defs>
-    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2A2826"/>
-      <stop offset="1" stop-color="#131211"/>
-    </linearGradient>
-  </defs>
-  <rect x="0" y="0" width="${SIZE}" height="${SIZE}" rx="${TILE_CORNER}" fill="url(#plate)"/>
-  <rect x="4" y="4" width="${SIZE - 8}" height="${SIZE - 8}" rx="${TILE_CORNER - 4}" fill="none" stroke="#FFFFFF" stroke-opacity="0.07" stroke-width="6"/>
-${ticks}  <path d="${arc(start, start + sweep, radius, cx, cy)}" stroke="${DIAL_TRACK}" stroke-width="${stroke}" stroke-linecap="round"/>
-  <path d="${arc(start, end, radius, cx, cy)}" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round"/>
-  <polygon points="${tx},${ty} ${b1x},${b1y} ${b2x},${b2y}" fill="${color}"/>
-  <circle cx="${cx}" cy="${cy}" r="23" fill="${color}"/>
-  <circle cx="${cx}" cy="${cy}" r="8" fill="#131211"/>`);
+function appTile() {
+  return wrap(`  <rect width="${SIZE}" height="${SIZE}" rx="116" fill="#2B1A33"/>
+  <g transform="translate(46 56) scale(4.2)" stroke-linejoin="round">
+    <path d="M52 17c5-11 16-13 23-9-2 10-12 16-23 9Z" fill="${LEAF}" stroke="${STICKER}" stroke-width="5" paint-order="stroke"/>
+    <path d="M50 19c22 0 40 16 40 36 0 21-18 33-40 33S10 76 10 55c0-20 18-36 40-36Z" fill="#F0862E" stroke="${STICKER}" stroke-width="5" paint-order="stroke"/>
+    <ellipse cx="50" cy="74" rx="20" ry="11" fill="#FFC48E"/>
+    <ellipse cx="29" cy="60" rx="6" ry="4" fill="#FF9FB4"/>
+    <ellipse cx="71" cy="60" rx="6" ry="4" fill="#FF9FB4"/>
+    <circle cx="37" cy="50" r="4" fill="${INK}"/>
+    <circle cx="63" cy="50" r="4" fill="${INK}"/>
+    <path d="M43 60c3 5 11 5 14 0" stroke="${INK}" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+  </g>`);
 }
 
 const work = mkdtempSync(join(tmpdir(), "tokengauge-icons-"));
@@ -129,7 +73,7 @@ const tauri = (args) => execFileSync("npx", ["tauri", ...args], { stdio: "inheri
 try {
   // The app tile drives the full platform set (icon.ico, icon.png, Square*Logo, icns, android, ios).
   const tile = join(work, "icon.svg");
-  writeFileSync(tile, appTile(APP_TILE));
+  writeFileSync(tile, appTile());
   tauri(["icon", tile]);
 
   // Tray states: only the .ico is used, so generate into a scratch directory
