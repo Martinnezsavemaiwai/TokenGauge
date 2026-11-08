@@ -1,18 +1,49 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { DEFAULT_PROVIDER_ID } from "../providers/registry";
+import { NOTIFY_THRESHOLDS } from "../lib/usage-state";
 
 export type Theme = "system" | "dark" | "light";
 export type Language = "en" | "th";
+
+export interface NotificationSettings {
+  enabled: boolean;
+  /** Highest first, a subset of NOTIFY_THRESHOLDS. */
+  thresholds: number[];
+  quotaBack: boolean;
+}
 
 interface Settings {
   theme: Theme;
   language: Language;
   providerId: string;
+  notifications: NotificationSettings;
 }
 
 const STORAGE_KEY = "tokengauge-settings";
-const DEFAULT_SETTINGS: Settings = { theme: "system", language: "en", providerId: DEFAULT_PROVIDER_ID };
+const DEFAULT_NOTIFICATIONS: NotificationSettings = {
+  enabled: true,
+  thresholds: [...NOTIFY_THRESHOLDS],
+  quotaBack: true,
+};
+const DEFAULT_SETTINGS: Settings = {
+  theme: "system",
+  language: "en",
+  providerId: DEFAULT_PROVIDER_ID,
+  notifications: DEFAULT_NOTIFICATIONS,
+};
 const LIGHT_QUERY = "(prefers-color-scheme: light)";
+
+function readNotifications(value: unknown): NotificationSettings {
+  if (typeof value !== "object" || value === null) return DEFAULT_NOTIFICATIONS;
+  const raw = value as Partial<NotificationSettings>;
+  return {
+    enabled: raw.enabled !== false,
+    thresholds: Array.isArray(raw.thresholds)
+      ? NOTIFY_THRESHOLDS.filter((threshold) => raw.thresholds!.includes(threshold))
+      : DEFAULT_NOTIFICATIONS.thresholds,
+    quotaBack: raw.quotaBack !== false,
+  };
+}
 
 function readSettings(): Settings {
   try {
@@ -23,13 +54,14 @@ function readSettings(): Settings {
       theme: parsed.theme === "light" || parsed.theme === "dark" ? parsed.theme : "system",
       language: parsed.language === "th" ? "th" : "en",
       providerId: typeof parsed.providerId === "string" ? parsed.providerId : DEFAULT_PROVIDER_ID,
+      notifications: readNotifications(parsed.notifications),
     };
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
-/** The stylesheet's default is dark, so only light needs an attribute. */
+/** The stylesheet's default is the night shelf, so only light needs an attribute. */
 function applyTheme(theme: Theme) {
   const resolved = theme === "system"
     ? (window.matchMedia(LIGHT_QUERY).matches ? "light" : "dark")
@@ -78,9 +110,9 @@ export const settingsStore = {
 };
 
 /**
- * Theme, language and the selected provider, persisted to localStorage and
- * synced live across TokenGauge's separate hover/click windows via the native
- * `storage` event (fires in other same-origin windows automatically — no IPC).
+ * Theme, language, provider and notification choices, persisted to localStorage
+ * and synced live across the hover and click windows via the native `storage`
+ * event.
  *
  * Theme defaults to `system`: this is a Windows companion, so it follows
  * Windows unless the user says otherwise.
@@ -98,12 +130,19 @@ export function useSettings() {
     return () => media.removeEventListener("change", onChange);
   }, [settings.theme]);
 
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+  }, [settings.language]);
+
   return {
     theme: settings.theme,
     language: settings.language,
     providerId: settings.providerId,
+    notifications: settings.notifications,
     setTheme: (theme: Theme) => settingsStore.update({ theme }),
     setLanguage: (language: Language) => settingsStore.update({ language }),
     setProviderId: (providerId: string) => settingsStore.update({ providerId }),
+    setNotifications: (patch: Partial<NotificationSettings>) =>
+      settingsStore.update({ notifications: { ...settingsStore.get().notifications, ...patch } }),
   };
 }

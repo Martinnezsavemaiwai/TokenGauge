@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { crossedThreshold, deriveUsageState, isLive, markKey, peakPercent, planLabel, type ThresholdMark } from "./usage-state";
+import { crossedThreshold, deriveUsageState, displayPercent, isLive, markKey, moodFor, peakPercent, planLabel, quotaReturned, rankLimits, type ThresholdMark } from "./usage-state";
 import type { UsageLimit } from "../types/provider";
 
 describe("deriveUsageState", () => {
@@ -144,5 +144,59 @@ describe("crossedThreshold — drifting reset clocks", () => {
       "2026-09-17T03:00:00.000000+00:00",
     );
     expect(next).toBe(60);
+  });
+});
+
+describe("the roster", () => {
+  it.each([
+    [null, "asleep"],
+    [10, "happy"],
+    [60, "worried"],
+    [90, "alarmed"],
+    [100, "spent"],
+  ] as const)("%s%% feels %s", (percent, mood) => {
+    expect(moodFor(percent)).toBe(mood);
+  });
+
+  it("ranks the limit closest to running out first", () => {
+    const ranked = rankLimits([
+      { kind: "session", percent: 12 },
+      { kind: "weekly", percent: 94 },
+    ]);
+    expect(ranked.map((l) => l.kind)).toEqual(["weekly", "session"]);
+  });
+
+  it("never prints 100 before the limit is spent", () => {
+    expect(displayPercent(99.6)).toBe(99);
+    expect(displayPercent(100)).toBe(100);
+    expect(displayPercent(74.5)).toBe(75);
+  });
+});
+
+describe("notification settings", () => {
+  it("only announces thresholds the user kept", () => {
+    expect(crossedThreshold(85, undefined, "w", [100, 60])).toBe(60);
+    expect(crossedThreshold(85, { window: "w", mark: 60 }, "w", [100, 60])).toBeNull();
+  });
+});
+
+describe("quotaReturned", () => {
+  const reset = "2026-11-08T12:00:00Z";
+  const after = Date.parse(reset) + 1000;
+  const before = Date.parse(reset) - 1000;
+
+  it("fires once the spent window's reset has passed", () => {
+    expect(quotaReturned({ window: reset, mark: 100 }, 3, after)).toBe(true);
+    expect(quotaReturned({ window: reset, mark: 100 }, undefined, after)).toBe(true);
+  });
+
+  it("stays quiet before the reset, for lower marks, and with no clock", () => {
+    expect(quotaReturned({ window: reset, mark: 100 }, 3, before)).toBe(false);
+    expect(quotaReturned({ window: reset, mark: 90 }, 3, after)).toBe(false);
+    expect(quotaReturned({ window: "", mark: 100 }, 3, after)).toBe(false);
+  });
+
+  it("does not claim a return while the reading is still spent", () => {
+    expect(quotaReturned({ window: reset, mark: 100 }, 100, after)).toBe(false);
   });
 });
