@@ -1,4 +1,4 @@
-import type { UsageLimit, UsageSnapshot, UsageState } from "../types/provider";
+import type { LimitKind, UsageLimit, UsageSnapshot, UsageState } from "../types/provider";
 
 /**
  * Whether the snapshot carries a measured percentage at all. Without a live API
@@ -80,6 +80,15 @@ export function planLabel(plan?: string): string | null {
 export function peakPercent(limits: UsageLimit[] | undefined, fallback = 0): number {
   if (!limits || limits.length === 0) return fallback;
   return Math.max(fallback, ...limits.map((l) => l.percent));
+}
+
+/**
+ * Where a limit's announced mark is stored. Per account, because one shared
+ * mark was overwritten on every switch and re-announced each account's
+ * threshold when the user came back to it.
+ */
+export function markKey(account: string | undefined, kind: LimitKind): string {
+  return account ? `${account}:${kind}` : kind;
 }
 
 /** Percentages that earn a notification, highest first. */

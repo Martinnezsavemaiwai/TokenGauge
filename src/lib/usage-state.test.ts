@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { crossedThreshold, deriveUsageState, isLive, peakPercent, planLabel, type ThresholdMark } from "./usage-state";
+import { crossedThreshold, deriveUsageState, isLive, markKey, peakPercent, planLabel, type ThresholdMark } from "./usage-state";
 import type { UsageLimit } from "../types/provider";
 
 describe("deriveUsageState", () => {
@@ -86,6 +86,26 @@ describe("crossedThreshold", () => {
   it("re-arms when the reading drops and there is no reset clock", () => {
     expect(crossedThreshold(61, { window: "", mark: 100 }, "")).toBe(60);
     expect(crossedThreshold(97, { window: "", mark: 100 }, "")).toBeNull();
+  });
+});
+
+describe("crossedThreshold — switching accounts", () => {
+  it("announces each account's threshold once across repeated switches", () => {
+    const marks: Record<string, ThresholdMark> = {};
+    const fired: string[] = [];
+    const poll = (account: string, percent: number, window: string) => {
+      const key = markKey(account, "session");
+      const crossed = crossedThreshold(percent, marks[key], window);
+      if (crossed !== null) {
+        marks[key] = { window, mark: crossed };
+        fired.push(`${account}:${crossed}`);
+      }
+    };
+    for (let i = 0; i < 3; i++) {
+      poll("a", 95, "2026-11-05T15:00:00Z");
+      poll("c", 70, "2026-11-05T19:00:00Z");
+    }
+    expect(fired).toEqual(["a:90", "c:60"]);
   });
 });
 

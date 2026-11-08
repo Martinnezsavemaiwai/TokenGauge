@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import type { LimitKind, UsageSnapshot, UsageState } from "../types/provider";
-import { crossedThreshold, deriveUsageState, peakPercent, type ThresholdMark } from "../lib/usage-state";
+import { crossedThreshold, deriveUsageState, markKey, peakPercent, type ThresholdMark } from "../lib/usage-state";
 import { useSettings } from "./useSettings";
 import { t, type StringKey } from "../lib/i18n";
 
@@ -80,9 +80,10 @@ export function useIntegration(
     const check = (kind: LimitKind, percent: number, resetAt: Date | undefined) => {
       const marks = readMarks();
       const window = resetAt?.toISOString() ?? "";
-      const crossed = crossedThreshold(percent, marks[kind], window);
+      const key = markKey(snapshot.account, kind);
+      const crossed = crossedThreshold(percent, marks[key], window);
       if (crossed === null) return;
-      writeMarks({ ...marks, [kind]: { window, mark: crossed } });
+      writeMarks({ ...marks, [key]: { window, mark: crossed } });
 
       // Each window gets its own wording. Sharing one "weekly limit" string
       // across `weekly` and `weekly_opus` made two different limits crossing at
