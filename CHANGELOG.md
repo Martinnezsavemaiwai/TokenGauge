@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.0] - 2026-11-08
+### Added
+- The dashboard shows which account is signed in.
+- The tray tooltip shows the limit closest to running out and when it resets.
+- A notification when a spent limit comes back. It is decided from the reset clock the spent window announced, so a failed API call can never read as a refill.
+- Notification settings: mute, choose thresholds, and turn the "limit is back" notice on or off.
+
+### Changed
+- New visual identity. Each metered window is a rounded character on a ranked roster, closest to its limit first, set in Mitr for both Thai and Latin. The ring and meters are gone.
+- The tray and app icons are now the session character. The tray icon changes both colour and face with the state, so colour is never the only signal.
+- The hover popup leads with whichever limit bites first, so it can no longer disagree with the tray icon, and carries five facts at most.
+
+### Removed
+- The dev page and mock data are no longer part of a release build.
+- framer-motion. The one animation left is CSS.
+
+### Fixed
+- An unlayered CSS reset was erasing every Tailwind padding and margin in both panels.
+- Durations stayed English in Thai, and `<html lang>` never changed.
+- The result of Check for Updates depended on notification permission, and an available update opened the browser unasked. It now shows in the panel with a button.
+- Limit-reached, signed-out and error states now say what happened and what to do.
+- A reading of 99.6% no longer prints as 100%.
+- Escape closes the dashboard from any tab. Tabs and the provider menu work from the keyboard, and reduced motion is honoured.
+- A slow response from an earlier provider could overwrite a newer reading.
+- The panel size cap is re-read from the current screen instead of once at launch.
+
 ## [0.3.2] - 2026-11-08
 ### Fixed
 - Every token figure was more than double the truth. Claude Code writes one line per content block and repeats the same `usage` on each, every line with its own `uuid`, and the scan deduped on that `uuid`. Each API message now counts once, keyed on `message.id` and `requestId`. On real session files this took a week from 3.05B tokens to 1.38B.
